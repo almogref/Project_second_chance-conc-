@@ -83,17 +83,19 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,_}, 
                             MapLocations = distribute(Members,ListOfLocations,{250,250},[],[],[],[]),
                             sendInitial(MapLocations,Members,State),
                             Loopi = spawn(fun() -> askForNewData(Members) end),
-                            {noreply,State#{loopi := Loopi, 1 := {N_1,MapLocations(1)},
-                             2 := {N_2,MapLocations(2)}, 3 := {N_3,MapLocations(3)} , 4 := {N_4,MapLocations(4)}}};
+                            {noreply,State#{loopi := Loopi, 1 := {N_1,lists:nth(1,MapLocations)},
+                            2 := {N_2,lists:nth(2,MapLocations)}, 3 := {N_3,lists:nth(3,MapLocations)},
+                            4 := {N_4,lists:nth(4,MapLocations)}}};
 
 
     {update,NumToAdd}  ->
                            io:format("TEST: info {update,NumToADD}: ~p ~n ~p ~n ",[Msg,State]),
                          MapLocations = handleMore(NumToAdd,Members),  % sends to handle more function with the update registers value
                          if
-                         Num =:= 4->
-                                     {noreply,State#{1 := {N_1,MapLocations(1)},
-                                     2 := {N_2,MapLocations(2)}, 3 := {N_3,MapLocations(3)} , 4 := {N_4,MapLocations(4)}}};
+                         Num =:= 4 ->
+                                     {noreply,State#{ 1 := {N_1,L1 ++ lists:nth(1,MapLocations)},
+                                       2 := {N_2,L2 ++ lists:nth(2,MapLocations)}, 3 := {N_3,L3 ++ lists:nth(3,MapLocations)},
+                                       4 := {N_4,L4 ++ lists:nth(4,MapLocations)}}};
                          % we need to check who is dead
                          true -> {noreply,reArange(State,MapLocations,NE1,NE2,NE3,NE4,ListOfDeads)}
                         end;
@@ -174,7 +176,7 @@ handleCrashes(ListOfCrashed,NodeToSend)  ->
 
 
 handleMore(NumToAdd,Members) ->
-  ListOfLocations = gen_Locations(250,NumToAdd),
+  ListOfLocations = gen_Locations({250,250},NumToAdd),
   distribute(Members,{250,250},ListOfLocations,[],[],[],[]).
 
 
