@@ -143,7 +143,7 @@ gen_Locations(Dimensions,N)->
 gen_Location({Width,Height}) -> {rand:uniform(Width),rand:uniform(Height)}.
 
 
-distribute(_,[],_,S1,S2,S3,S4)-> [{1,S1},{2,S2},{3,S3},{4,S4}];
+distribute(_,[],_,S1,S2,S3,S4)-> [S1,S2,S3,S4];
 
 distribute(Flocks,[Loc|T], Dimensions,S1,S2,S3,S4)->
   {Width,Height} = Dimensions,
@@ -232,8 +232,8 @@ loopByTime([ Node | T ]) ->
 
 sendInitial([],_,_) ->
     done;
-sendInitial([ {Id,List} | T ], Members, State) ->
-  sendPost(Members,List,maps:get(Id,State)),
+sendInitial([ H | T ], Members, State) ->
+  sendPost(Members,List,element(1,maps:get(Id,State))),
   sendInitial(T, Members,State).
 
 sendPost(Members,List,Member) ->
