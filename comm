@@ -115,13 +115,13 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,_}, 
                                         ListOfCrashed = element(2,maps:get(CrashId,State)),
                                         NewMembers = lists:delete({CrashId,Node},Members),
                                         Neighbour = getNeighbour(CrashId,NE1,NE2,NE3,NE4),
-                                        [L1,L2,L3,L4] = cleanSubLists(CrashId,NE1,NE2,NE3,NE4),
+                                        [LI1,LI2,LI3,LI4] = cleanSubLists(CrashId,NE1,NE2,NE3,NE4),
                                         handleCrashes(ListOfCrashed,Neighbour),
                                         gen_server:cast(graphic,{down,Num-1}),
                                         % update the status with the right nodes alive
                                         {noreply,State#{registers := Num - 1, CrashId := {dead,[]}, Node := dead,
                                         list_mem := NewMembers, list_of_deads := [CrashId] ++ ListOfDeads,
-                                        alives_1 := L1, alives_2 := L2, alives_3 := L3, alives_4 := L4 }}
+                                        alives_1 := LI1, alives_2 := LI2, alives_3 := LI3, alives_4 := LI4 }}
                         end;
     % dont care
     _    ->             io:format("TEST: info else: ~p ~n",[Msg]),{noreply,State}
@@ -199,11 +199,12 @@ reArange(State,MapLocations,NE1,NE2,NE3,NE4,[H|T]) ->
 % We didnt take care if two is down
 getNeighbour(CrashId,NE1,NE2,NE3,NE4) ->
       case CrashId of
-                   1  -> NE1(1);
-                   2  -> NE2(1);
-                   3  -> NE3(1);
-                   4  -> NE4(1)
+                   1  -> lists:nth(1,NE1);
+                   2  -> lists:nth(1,NE2);
+                   3  -> lists:nth(1,NE3);
+                   4  -> lists:nth(1,NE4)
       end.
+
 
 
 % to check if its allowed not to check if id is in the list first.
