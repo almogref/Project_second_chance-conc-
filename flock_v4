@@ -67,9 +67,9 @@ handle_cast(Request, State) ->
                                      Pid ! {generate_loc,Neighbors},
                                      {noreply,State};
     %%---------------------------------
-    {flock_down,Transferred,Id} -> New_flocks = change_margins(Id,State),
-                                    update_online(State),
-                                   {noreply,State#state{agents_n = #state.agents_n ++ Transferred,
+    {flock_down,Transferred,Id} -> New_flocks = change_margins(Id,State#state.flocks),
+                                   update_online(State),
+                                   {noreply,State#state{agents_n = State#state.agents_n ++ Transferred,
                                                         flocks = New_flocks}};
     {insert,New_Locations} ->
       io:format("TEST:{insert,New_Locations} New_Locations: ~p~n STATE: ~p~n",[New_Locations,State]),
@@ -147,7 +147,8 @@ request_new_locations(State)->
 
 rnl_loop([],_) -> [];
 rnl_loop([{Pid,{Location,_,_}}|T],Flocks)->
-  [gen_server:cast(Ip ,{flock_request,Pid,Location}) ||  Ip <- Flocks],
+  io:format("TEST: rnl_loop. Pid: ~p~n Location: ~p~n Flocks: ~p~n",[Pid,Location,Flocks]),
+  [gen_server:cast({flock_v4,Ip} ,{flock_request,Pid,Location}) ||  Ip <- Flocks],
   rnl_loop(T,Flocks).
 
 %% @doc get_Neighbors
@@ -187,15 +188,14 @@ agent(Location, Di_2D,Color, Flock, Temp_List, Pending, Online) ->
   end.
 
 match([F1,F2,F3,F4],{Width,Height},Loc)->
-  F1.
-  %{X,Y} = Loc,
-  %Border_W = Width/2,
-  %Border_H = Height/2,
-  %if X < Border_W ->
-  %  if Y < Border_H -> F2; true-> F3 end;
-  %  true->
-  %    if Y < Border_H -> F1; true-> F4 end
-  %end.
+  {X,Y} = Loc,
+  Border_W = Width/2,
+  Border_H = Height/2,
+  if X < Border_W ->
+    if Y < Border_H -> F2; true-> F3 end;
+    true->
+      if Y < Border_H -> F1; true-> F4 end
+  end.
 
 %--------------------------------------------
 %--------------------------------------------
