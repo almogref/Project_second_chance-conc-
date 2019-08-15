@@ -3,8 +3,7 @@
 
 -export([start_link/0]).
 
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-  terminate/2, code_change/3]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -export([handleMore/1,splitUtilities/1]).
 
@@ -36,25 +35,25 @@ handle_call(Request, _, State = #{registers := OldNum, list_mem := Members}) ->
     % registers + 1
     {register,Name} ->
                     if
-                      OldNum + 1 =:= 4 ->
+                      OldNum + 1 =:= 4 ->io:format("TEST: 4 REGISTERS. NAME: ~p~n STATE: ~p~n",[Name,State]),
                                           graphic:start_link(comm),
                                           erlang:monitor_node(Name,true),
                                           gen_server:cast({flock_v4,Name},{connect,OldNum + 1}),
                                           % Form of message the send to nodes:  {ok,id_number}
                                           % reply to the remote node 'ok' and saves him in the States - { id => node, node => id }
-                                          {reply,State#{registers := OldNum + 1, OldNum + 1 := {Name,[]}, Name => OldNum + 1,
+                                          {noreply,State#{registers := OldNum + 1, OldNum + 1 := {Name,[]}, Name => OldNum + 1,
                                             list_mem := [{OldNum + 1,Name}]++ Members}};
 
-                      true ->
+                      true ->             io:format("TEST: REGISTER. NAME: ~p~n STATE: ~p~n",[Name,State]),
                                            erlang:monitor_node(Name,true),
                                           % Form of message the send to nodes:  {ok,id_number}
                                            gen_server:cast({flock_v4,Name},{connect,OldNum + 1}),
-                                          {reply,State#{registers := OldNum + 1, OldNum + 1 := {Name,[]}, Name => OldNum + 1,
+                                          {noreply,State#{registers := OldNum + 1, OldNum + 1 := {Name,[]}, Name => OldNum + 1,
                                             list_mem := [{OldNum + 1,Name}]++ Members, alives_1 => [4,3,2], alives_4 => [3,2,1],
                                             alives_3 => [2,1,4], alives_2 => [1,4,3]}}
                     end;
 
-    ________________                    ->    {noreply, State}
+    ________________                    ->    io:format("TEST: PROBLEM. REQ: ~p~n STATE: ~p~n",[Request,State]),{noreply, State}
 
   end.
 
@@ -244,7 +243,7 @@ askForNewData(Members) ->
 
 loopByTime([]) -> done;
 loopByTime([ Node | T ]) ->
-    gen_server:cast({flock_v4,Node},{master_request}),
+    gen_server:cast({flock_v4,element(2,Node)},{master_request}),
     loopByTime(T).
 
 % -------------------------------------------------------------------------
@@ -254,7 +253,7 @@ loopByTime([ Node | T ]) ->
 sendInitial([],_,_,_) ->
     done;
 sendInitial([ H | T ], Members, State, Offset) ->
-  sendPost(Members,H,element(1,maps:get(Offset,State))),
+  sendPost(membersToList(Members,[]),H,element(1,maps:get(Offset,State))),
   sendInitial(T, Members,State,Offset+1).
 
 sendPost(Members,List,Member) ->
@@ -272,7 +271,8 @@ sendWhile([H|_],L1,L2,L3,L4) ->
   end.
 
 
-
+membersToList(Members,List) ->
+  lists:foreach(fun(I) -> [element(2,I)] ++ List end,Members).
 
 
 
