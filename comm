@@ -69,7 +69,7 @@ handle_cast(_Msg, State = #{numPackets := Num, registers := NumReg}) ->
                                   Num =:= NumReg -> gen_server:cast(graphic,paint),{noreply,State#{numPackets :=0}} ;
                                   true ->           {noreply,State#{numPackets := Num + 1}}
                                 end;
-    _     ->                    {noreply,State}
+    _     ->                     {noreply,State}
   end.
 
 
@@ -209,10 +209,10 @@ handleMore(NumToAdd) ->
 
 
 % NE(i) is lists of alive neighbours(clockwise) of node i
-reArange(State,_,[]) ->
+reArange(State = #{list_mem := Members, 1 := {_,L1}, 2 := {_,L2},3 := {_,L3}, 4 := {_,L4}},_,[]) ->
+    sendWhile(Members,L1,L2,L3,L4), % Sends the new lists to all members alive, avoids duplicate requests :)
     State;
-reArange(State = #{1 := {_,L1}, 2 := {_,L2},3 := {_,L3}, 4 := {_,L4},
-          alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4}, MapLocations, [H|T]) ->
+reArange(State = #{alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4}, MapLocations, [H|T]) ->
     {IdToSend,IdDead,BirdsAlive} =   case H of
                                         % GETS THE BIRDS LIST OF THE NEIGHBOUR
                                         1  -> {lists:nth(1,NE1),1,element(2,maps:get(lists:nth(1,NE1),State))};
@@ -222,8 +222,6 @@ reArange(State = #{1 := {_,L1}, 2 := {_,L2},3 := {_,L3}, 4 := {_,L4},
                                       end,
       NodeToSend = maps:get(IdToSend,State),
       NewList = lists:nth(IdToSend,MapLocations) ++ lists:nth(IdDead,MapLocations) ++ BirdsAlive,
-      io:format("TEST: reArange. NodeToSend: ~p ~nNewList:  ~p ~n ",[NodeToSend,NewList]),
-      %gen_server:cast({flock_v4,NodeToSend},{insert,NewList}),
       reArange(State#{IdToSend := {element(1,NodeToSend),NewList}},MapLocations,T).
 
 
@@ -275,7 +273,19 @@ sendPost(Members,List,Member) ->
 
 
 
-% TO FIX ALL THE MISTYPES LIST(index)
+sendWhile([],_,_,_,_) ->
+  done;
+sendWhile([H|_],L1,L2,L3,L4) ->
+  case element(1,H) of
+     1 -> gen_server:cast({flock_v4,element(2,H)},{insert,L1});
+     2 -> gen_server:cast({flock_v4,element(2,H)},{insert,L2});
+     3 -> gen_server:cast({flock_v4,element(2,H)},{insert,L3});
+     4 -> gen_server:cast({flock_v4,element(2,H)},{insert,L4})
+  end.
+
+
+
+
 
 
 
