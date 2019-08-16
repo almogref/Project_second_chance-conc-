@@ -68,6 +68,9 @@ handle_cast(_Msg, State = #{numPackets := Num, registers := NumReg}) ->
                                   Num =:= NumReg -> gen_server:cast(graphic,paint),{noreply,State#{numPackets :=0}} ;
                                   true ->           {noreply,State#{numPackets := Num + 1}}
                                 end;
+
+    test -> io:format("TEST: master_request. State: ~p ~n ",[State]);
+
     _     ->                     {noreply,State}
   end.
 
