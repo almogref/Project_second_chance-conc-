@@ -30,7 +30,7 @@ start_link(Name) ->
 
 init([Name]) ->
   State = #state{master = {check,'ofek@ofek-ThinkPad-T460'}, %% @TODO
-    myname = {Name,'ofek@ofek-ThinkPad-T460'},
+    myname = Name,
     agents_n =  [],
     dimension = {1300,700},
     radius = 250,
@@ -95,8 +95,11 @@ handle_cast(Request, State) ->
           NewMax = State#state.max -1, NewNum = State#state.num - 1 ,
           NewState = State#state{max = NewMax, num = NewNum}
       end,
+      io:format("TEST: CONDITION: ~p ~n ",[State#state.num]),
       if NewState#state.num == 0 ->
-        State#state.id ! {package,change_setup(NewState#state.agents_n)},
+        %State#state.id ! {package,change_setup(NewState#state.agents_n)},
+        io:format("TEST: package. PACKAGE: ~p ~n ",[change_setup(NewState#state.agents_n)]),
+        gen_server:cast({comm,'almog@h-MBP-sl-lmwg'},{package,change_setup(NewState#state.agents_n)}),
         %gen_server:cast(NewState#state.master,{NewState#state.myname,NewState#state.agents}),
         FinalState = NewState#state{ num = NewState#state.max,agents = NewState#state.agents_n, agents_n = []};
         true-> FinalState =NewState end,
@@ -183,7 +186,8 @@ agent(Location, Di_2D,Color, Flock, Temp_List, Pending, Online) ->
     {generate_loc,Neighbors} -> Current = Pending -1,
       if Current =:= 0 ->
         {New_loc,New_Di} = generate_Stats(Temp_List ++ Neighbors,Location,Di_2D,Color,{1300,700}),
-        gen_server:cast(Flock,{update,{self(),{New_loc,New_Di,Color}}}),
+        io:format("TEST: agent. FLOCK: ~p~n ",[Flock]),
+        gen_server:cast({flock_v4,Flock},{update,{self(),{New_loc,New_Di,Color}}}),
         agent(New_loc,New_Di,Color,Flock, [], Online, Online );
         true ->
           agent(Location,Di_2D,Color,Flock, Temp_List ++ Neighbors, Current, Online )
