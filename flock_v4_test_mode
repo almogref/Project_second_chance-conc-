@@ -1,0 +1,331 @@
+%%%-------------------------------------------------------------------
+%%% @author ofek
+%%% @copyright (C) 2019, <COMPANY>
+%%% @doc
+%%%
+%%% @end
+%%% Created : 05. Aug 2019 8:21
+%%%-------------------------------------------------------------------
+-module(flock_v4).
+-author("ofek").
+
+-behaviour(gen_server).
+
+%% API
+-export([start_link/1,normalize_2D/1]).
+
+%% gen_server callbNOacks
+-export([init/1,
+  handle_call/3,
+  handle_cast/2,
+  handle_info/2,
+  terminate/2,
+  code_change/3]).
+
+-record(state, {id, online,flocks, agents,agents_n, radius, master, dimension, drive_factor, w1, w2, w3, w4, myname, num, max}).
+
+
+start_link(Name) ->
+  gen_server:start_link({local, flock_v4}, flock_v4, [Name], []).
+
+init([Name]) ->
+  State = #state{master = {check,'ofek@ofek-ThinkPad-T460'}, %% @TODO
+    myname = {Name,'ofek@ofek-ThinkPad-T460'},
+    agents_n =  [],
+    dimension = {1300,700},
+    radius = 250,
+    online = 1,
+    drive_factor = 3,
+    w1 = 1,
+    w2 = 1,
+    w3 = 2,
+    w4 = 0.3},
+  spawn(fun() -> timer:sleep(10),gen_server:call({comm,'almog@h-MBP-sl-lmwg'},{register,Name}) end), % Spawn process for registration only
+  {ok,State}.
+
+handle_cast(Request, State) ->
+  case Request of
+    %%-------------------------------------------------------------- Connection
+    {connect,Id} -> io:format("got pid on gen ~w \n",[Id]),
+                    {noreply, State#state{ id = Id }};
+    %%-------------------------------------------------------------- Initialize
+    %% @Locations  - [{X,Y},....]
+    %% @Flock_List - [ip1,ip2,ip3,ip4]
+    {init,Locations,Flock_List} ->  io:format("TEST:{init,Locations,Flock_List} Locations: ~p~n Flock_List: ~p~n",[Locations,Flock_List]),
+                                    Agents = spawn_flock(Locations,State),
+                                    Count = count(Locations),
+                                    NewState = State#state{ agents = Agents, flocks = Flock_List, max = Count, num = Count},
+                                    {noreply,NewState};
+    %-------------------------------------------------------------- Master request
+    {master_request}  ->  io:format("TEST: master_request. State: ~p ~n ",[State]),
+                          request_new_locations(State),
+                          {noreply,State};
+    %-------------------------------------------------------------- FLock request
+    {flock_request,Pid,Location} -> io:format("TEST: flock_request. Pid: ~p~n Flock_List: ~p~n",[Pid,Location]),
+                                     Neighbors = get_Neighbors(State#state.agents,Location,State#state.radius),
+                                      %%@TODO CHECK OPTION FOR EXCLUDING
+                                     Pid ! {generate_loc,Neighbors},
+                                     {noreply,State};
+    %%---------------------------------
+    {flock_down,Transferred,Id} -> io:format("TEST: flock_down. Transferred: ~p~n Id: ~p~n",[Transferred,Id]),
+                                   New_flocks = change_margins(Id,State#state.flocks),
+                                   update_online(State),
+                                   {noreply,State#state{agents_n = State#state.agents_n ++ Transferred,
+                                                        flocks = New_flocks}};
+    {insert,New_Locations} ->
+      io:format("TEST: insert. New_Locations: ~p~n STATE: ~p~n",[New_Locations,State]),
+      Agents = spawn_flock(New_Locations,State),
+      Count = count(New_Locations),
+      NewState = State#state{ agents_n = State#state.agents_n ++ Agents,
+                              max = State#state.max + Count,
+                              num = State#state.num + Count},
+                              {noreply,NewState};
+    {update,Agent} ->
+      Flock_i = match(State#state.flocks,
+                      State#state.dimension,
+                      get_loc(Agent)),
+      if State#state.myname== Flock_i ->
+        %io:format("STAY",[]),
+        NewNum = State#state.num - 1,
+        NewAgentList = State#state.agents_n ++ [Agent],
+        NewState = State#state{agents_n = NewAgentList,num = NewNum};
+        true->
+          %io:format("Leave",[]),
+          gen_server:cast(Flock_i,{add,Agent}),
+          NewMax = State#state.max -1, NewNum = State#state.num - 1 ,
+          NewState = State#state{max = NewMax, num = NewNum}
+      end,
+      if NewState#state.num == 0 ->
+        State#state.id ! {package,change_setup(NewState#state.agents_n)},
+        %gen_server:cast(NewState#state.master,{NewState#state.myname,NewState#state.agents}),
+        FinalState = NewState#state{ num = NewState#state.max,agents = NewState#state.agents_n, agents_n = []};
+        true-> FinalState =NewState end,
+    {noreply,FinalState};
+    %%---------------------------------
+    {add,Agent} ->
+      get_Pid(Agent) ! {change_flock, State#state.myname},
+      NewAgentList = State#state.agents_n ++ [Agent],
+      NewState= State#state{agents_n = NewAgentList,
+                          max = State#state.max +1,
+                          num = State#state.num +1},
+        {noreplay,NewState} ;
+
+
+    test -> io:format("TEST: master_request. State: ~p ~n ",[State]);
+
+    _ -> {noreply,State}
+  end.
+
+
+handle_call(_Request,_From, State) ->
+  {reply, ok, State}.
+
+
+handle_info(_Info, State) ->
+  {noreply, State}.
+
+terminate(_Reason, _State) ->
+  ok.
+
+code_change(_OldVsn, State, _Extra) ->
+  {ok, State}.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+%%  @doc spawn_flock
+%%  @param Locations, Node_ip
+%%  @returns A list of Agents
+spawn_flock([],_) -> [];
+spawn_flock([Location|T],State) ->
+  Direction = gen_Di_2D(),
+  Color = color(),
+  Online = State#state.online,
+  Node = State#state.myname,
+  Pid = spawn(fun() ->agent(Location,Direction,Color,Node,[],Online,Online) end),
+  Agent = {Pid,{Location,Direction,Color}},
+  [Agent | spawn_flock(T,State)].
+
+%% request from all flocks to return the neighbors of all agents
+request_new_locations(State)->
+  rnl_loop(State#state.agents,State#state.flocks).
+
+rnl_loop([],_) -> [];
+rnl_loop([{Pid,{Location,_,_}}|T],Flocks)->
+  io:format("TEST: rnl_loop. Pid: ~p~n Location: ~p~n Flocks: ~p~n",[Pid,Location,Flocks]),
+  [gen_server:cast({flock_v4,Ip} ,{flock_request,Pid,Location}) ||  Ip <- Flocks],
+  rnl_loop(T,Flocks).
+
+%% @doc get_Neighbors
+%% @param List,Location,Radius
+%% @returns a list of Neighbors in radius including yourself if exist
+get_Neighbors(List,Location,Radius)->
+  Is_inside = fun({X_0,Y_0},{_,{{X_1,Y_1},_,_}}) ->
+    Delta_x = X_0 - X_1,
+    Delta_y = Y_0 - Y_1,
+    Distance_squared = Delta_x*Delta_x + Delta_y*Delta_y,
+    Radius_squared = Radius*Radius,
+    if Distance_squared < Radius_squared -> true;
+      true -> false
+    end end,
+  [ Item || Item <- List , Is_inside(Location,Item)].
+
+%% @doc gen_Di_2D
+%% @returns a 2D normalized vector representing a direction
+gen_Di_2D() ->
+  X_Sign = rand:uniform(2), Y_Sign =rand:uniform(2),
+  if X_Sign == 1 ->  X_vec = -rand:uniform() ; true-> X_vec = rand:uniform() end,
+  if Y_Sign == 1 ->  Y_vec = -rand:uniform() ; true-> Y_vec = rand:uniform() end,
+  normalize_2D({X_vec,Y_vec}).
+
+agent(Location, Di_2D,Color, Flock, Temp_List, Pending, Online) ->
+  receive
+    {generate_loc,Neighbors} -> Current = Pending -1,
+      if Current =:= 0 ->
+        {New_loc,New_Di} = generate_Stats(Temp_List ++ Neighbors,Location,Di_2D,Color,{1300,700}),
+        gen_server:cast(Flock,{update,{self(),{New_loc,New_Di,Color}}}),
+        agent(New_loc,New_Di,Color,Flock, [], Online, Online );
+        true ->
+          agent(Location,Di_2D,Color,Flock, Temp_List ++ Neighbors, Current, Online )
+      end;
+    {change_flock, New_flock} -> agent(Location,Di_2D,Color,New_flock,Temp_List,Pending,Online);
+    {update_Active} -> agent(Location,Di_2D,Color,Flock,Temp_List,Pending, Online -1)
+  end.
+
+match([F1,F2,F3,F4],{Width,Height},Loc)->
+  {X,Y} = Loc,
+  Border_W = Width/2,
+  Border_H = Height/2,
+  if X < Border_W ->
+    if Y < Border_H -> F2; true-> F3 end;
+    true->
+      if Y < Border_H -> F1; true-> F4 end
+  end.
+
+%--------------------------------------------
+%--------------------------------------------
+
+
+get_val({_,Val}) -> Val.
+get_loc({_,{Loc,_,_}}) -> Loc.
+get_Pid({Pid,{_,_,_}}) -> Pid.
+
+
+
+generate_Stats(Neighbors_List,Location,Direction,Color,{Width,Height}) ->
+  DriveFactor = 0.3,
+  Excluded = lists:delete({self(),{Location,Direction}},Neighbors_List),
+  Colored_specific = get_Colored_Neigh(Color,Excluded),
+  Cohesion_move = calculate_Cohesion(Colored_specific,0,Location,{0,0},Direction), %% when 0!?!??!!
+  Alignment = calculate_alignment(Colored_specific,0,{0,0},Direction),
+  Avoid_Neighbors = get_Neighbors(Excluded,Location,77),
+  Avoidance_move = calculate_avoidance(Avoid_Neighbors,0,Location,{0,0}),
+  Stay_inside = keepInRadius({Width,Height},Location),
+  Offset = composite(Cohesion_move,Alignment,Avoidance_move,Stay_inside),
+  Velocity = mult_i_2D(Offset,DriveFactor),
+  {sum_2D(Location,Velocity),normalize_2D(Offset)}.
+
+calculate_alignment([],0,_,Static)-> Static;
+calculate_alignment([],N,{X,Y},_)-> {X/N,Y/N};
+calculate_alignment([{_,{_,Direction,_}}|T],N,{X,Y},Static)->
+{X_i,Y_i} = Direction,
+calculate_alignment(T,N+1, {X+X_i,Y+Y_i},Static).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% COHESION %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+calculate_Cohesion([],0,_,_,_) -> {0,0};
+calculate_Cohesion([],N,{X_0,Y_0},{X,Y},{Xinit,Yinit}) ->
+  {X/N - X_0,Y/N -Y_0};
+%{Pre_sx,Pre_sy} = {X/N - X_0,Y/N -Y_0},
+%{smooth_damp(Xinit,Pre_sx,1,2),smooth_damp(Yinit,Pre_sy,1,9)};
+calculate_Cohesion([{_,{Location,_,_}}|T],N,{X_0,Y_0}, {X,Y}, TMP ) ->
+{X_i,Y_i} = Location,
+calculate_Cohesion(T,N+1,{X_0,Y_0},{X+X_i,Y+Y_i}, TMP).
+
+smooth_damp(Init,C,D,T) -> Init + C*(D/T).
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Avoidance %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+calculate_avoidance([],0,_,_)-> {0,0};
+calculate_avoidance([],N,_,{X,Y})-> {X/N,Y/N};
+calculate_avoidance([{_,{Location,_,_}}|T],N,{X_0,Y_0},{X,Y})->
+{X_i,Y_i} = Location,
+calculate_avoidance(T,N + 1,{X_0,Y_0}, {X + X_0 -X_i ,Y + Y_0 - Y_i} ).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Composite %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+composite(Cohesion_move,Alignment,Avoidance_move,Stay_inside)->
+  Partial_move = fun(Move,Weight)->
+    Partial_Move = mult_i_2D(Move,Weight),
+    Squared_mag = magnitude(Partial_Move),
+    Squared_weight = Weight*Weight,
+    if Squared_mag > Squared_weight ->
+      mult_i_2D(normalize_2D(Partial_Move),Weight);
+      true->
+        Partial_Move
+    end
+                 end,
+  [{X0,Y0},{X1,Y1},{X2,Y2},{X3,Y3}] = [Partial_move(Cohesion_move,5),
+    Partial_move(Alignment,7),
+    Partial_move(Avoidance_move,5.1),
+    Partial_move(Stay_inside,0.2)],
+  {X0 +X1 +X2 +X3,Y0 + Y1 + Y2 +Y3}.
+
+%% @doc normalize_2D
+%% @param 2D Vector
+%% @returns normalized vector
+normalize_2D(Vec)->
+  if Vec =:= {0.0,0.0} -> Vec; true->
+    {X,Y} = Vec,
+  Normal = math:pow(X*X + Y*Y,1/2),
+  {X/Normal,Y/Normal} end.
+
+magnitude({X,Y})-> math:pow(X*X+Y*Y,1/2).
+sum_2D({X0,Y0},{X1,Y1})-> {X0+X1,Y0+Y1}.
+sub_2D({X0,Y0},{X1,Y1})-> {X0-X1,Y0-Y1}.
+mult_i_2D({X,Y},C) -> {X*C,Y*C}.
+
+keepInRadius(Dimension,Location)->
+  {Width,Height} = Dimension,
+  Center = {Width/2,Height/2},
+  CenterOffset = sub_2D(Center,Location),
+  T = magnitude(CenterOffset)/220,
+  if T < 0.8-> {0,0};
+    true -> mult_i_2D(CenterOffset,T*T)
+  end.
+
+
+get_Colored_Neigh(My_color,Agents)->
+  Is_Same = fun(Color,{_,{_,_,Other_color}}) -> Color =:= Other_color end,
+  [ Item || Item <- Agents , Is_Same(My_color,Item)].
+
+count([]) -> 0;
+count([_|T])-> count(T) + 1.
+
+change_setup([]) ->[];
+change_setup([{Pid,{Loc,Dir,Color}}|T])-> [{Loc,to_Rad(Dir),Pid,Color}] ++ change_setup(T).
+
+to_Rad({X,Y})-> math:atan2(X,Y).
+
+color() ->
+  Val = rand:uniform(3),
+  case Val of
+    1 -> red;
+    2 -> black;
+    3 -> blue
+  end.
+
+change_margins(Fallen,[F1,F2,F3,F4])->
+  case Fallen of
+    1 -> [F2,F2,F3,F4];
+    2 -> [F1,F3,F3,F4];
+    3 -> [F1,F2,F4,F4];
+    4 -> [F1,F2,F3,F1]
+  end.
+
+
+
+update_online(State)->
+  send_update(State#state.agents_n),
+  send_update(State#state.agents).
+
+send_update([]) -> [];
+send_update([{Pid,_}|T])->
+  Pid ! {update_Active},
+  send_update(T).
