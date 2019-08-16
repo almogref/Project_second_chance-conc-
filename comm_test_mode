@@ -69,7 +69,7 @@ handle_cast(_Msg, State = #{numPackets := Num, registers := NumReg}) ->
                                   true ->           {noreply,State#{numPackets := Num + 1}}
                                 end;
 
-    test -> io:format("TEST: master_request. State: ~p ~n ",[State]);
+    test -> io:format("TEST: The state is: ~p ~n ",[State]),{noreply,State};
 
     _     ->                     {noreply,State}
   end.
