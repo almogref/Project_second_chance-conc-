@@ -224,6 +224,17 @@ reArange(State = #{alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 :
       NewList = lists:nth(IdToSend,MapLocations) ++ lists:nth(IdDead,MapLocations) ++ BirdsAlive,
       reArange(State#{IdToSend := {element(1,NodeToSend),NewList}},MapLocations,T).
 
+sendWhile([],_,_,_,_) ->
+  done;
+sendWhile([H|T],L1,L2,L3,L4) ->
+  case element(1,H) of
+    1 -> io:format("TEST: sendWhile. List: ~p~n Member: ~p~n",[L1,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L1}),sendWhile(T,L1,L2,L3,L4);
+    2 -> io:format("TEST: sendWhile. List: ~p~n Member: ~p~n",[L2,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L2}),sendWhile(T,L1,L2,L3,L4);
+    3 -> io:format("TEST: sendWhile. List: ~p~n Member: ~p~n",[L3,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L3}),sendWhile(T,L1,L2,L3,L4);
+    4 -> io:format("TEST: sendWhile. List: ~p~n Member: ~p~n",[L4,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L4}),sendWhile(T,L1,L2,L3,L4)
+  end.
+
+
 
 % We didnt take care if two is down
 getNeighbour(CrashId,NE1,NE2,NE3,NE4) ->
@@ -277,15 +288,6 @@ sendPost(Members,List,Member) ->
   gen_server:cast({flock_v4,Member},{init,List,Members}).
 
 
-sendWhile([],_,_,_,_) ->
-  done;
-sendWhile([H|_],L1,L2,L3,L4) ->
-  case element(1,H) of
-     1 -> io:format("TEST: sendWhile. List: ~p~n Members: ~p~n",[L1,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L1});
-     2 -> io:format("TEST: sendWhile. List: ~p~n Members: ~p~n",[L2,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L2});
-     3 -> io:format("TEST: sendWhile. List: ~p~n Members: ~p~n",[L3,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L3});
-     4 -> io:format("TEST: sendWhile. List: ~p~n Members: ~p~n",[L4,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L4})
-  end.
 
 
 membersToList([],Acc) -> Acc;
