@@ -101,7 +101,7 @@ handle_cast(Request, State) ->
       if NewState#state.num == 0 ->
         %State#state.id ! {package,change_setup(NewState#state.agents_n)},
         io:format("TEST: package. PACKAGE: ~p ~n ",[change_setup(NewState#state.agents_n)]),
-        gen_server:cast({comm,'almog@h-MBP-sl-lmwg'},{package,change_setup(NewState#state.agents_n),#state.id}),
+        gen_server:cast({comm,'almog@h-MBP-sl-lmwg'},{package,change_setup(NewState#state.agents_n),NewState#state.id}),
         %gen_server:cast(NewState#state.master,{NewState#state.myname,NewState#state.agents}),
         FinalState = NewState#state{ num = NewState#state.max,agents = NewState#state.agents_n, agents_n = []};
         true-> FinalState =NewState end,
