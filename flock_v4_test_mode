@@ -45,6 +45,8 @@ init([Name]) ->
 
 handle_cast(Request, State) ->
   case Request of
+
+    stop -> io:format("TEST: stop. State \n",[]); %%%%% TO COMPLETE WHAT TO DO %%%%%
     %%-------------------------------------------------------------- Connection
     {connect,Id} -> io:format("got pid on gen ~w \n",[Id]),
                     {noreply, State#state{ id = Id }};
@@ -99,7 +101,7 @@ handle_cast(Request, State) ->
       if NewState#state.num == 0 ->
         %State#state.id ! {package,change_setup(NewState#state.agents_n)},
         io:format("TEST: package. PACKAGE: ~p ~n ",[change_setup(NewState#state.agents_n)]),
-        gen_server:cast({comm,'almog@h-MBP-sl-lmwg'},{package,change_setup(NewState#state.agents_n)}),
+        gen_server:cast({comm,'almog@h-MBP-sl-lmwg'},{package,change_setup(NewState#state.agents_n),#state.id}),
         %gen_server:cast(NewState#state.master,{NewState#state.myname,NewState#state.agents}),
         FinalState = NewState#state{ num = NewState#state.max,agents = NewState#state.agents_n, agents_n = []};
         true-> FinalState =NewState end,
