@@ -111,7 +111,7 @@ handle_cast(Request, State) ->
         {noreplay,NewState} ;
 
 
-    test -> io:format("TEST: master_request. State: ~p ~n ",[State]);
+    test -> io:format("TEST: The state is: ~p ~n ",[State]),{noreply,State};
 
     _ -> {noreply,State}
   end.
