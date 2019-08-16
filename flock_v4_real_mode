@@ -44,9 +44,10 @@ init([Name]) ->
   {ok,State}.
 
 handle_cast(Request, State) ->
+  io:format("The Request is: ~p ~n AND the number: ~p~n ",[Request,State#state.num]),
   case Request of
 
-    stop -> io:format("TEST: stop. State \n",[]); %%%%% TO COMPLETE WHAT TO DO %%%%%
+    stop -> gen_server:stop(flock_v4);
     %%-------------------------------------------------------------- Connection
     {connect,Id} ->
                     {noreply, State#state{ id = Id }};
