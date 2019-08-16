@@ -30,7 +30,7 @@ start_link(Name) ->
 
 init([Name]) ->
   State = #state{master = {check,'ofek@ofek-ThinkPad-T460'}, %% @TODO
-    myname = {Name,'ofek@ofek-ThinkPad-T460'},
+    myname = Name,
     agents_n =  [],
     dimension = {1300,700},
     radius = 250,
@@ -45,69 +45,76 @@ init([Name]) ->
 
 handle_cast(Request, State) ->
   case Request of
+
+    stop -> io:format("TEST: stop. State \n",[]); %%%%% TO COMPLETE WHAT TO DO %%%%%
     %%-------------------------------------------------------------- Connection
-    {connect,Id} -> io:format("got pid on gen ~w \n",[Id]),
+    {connect,Id} ->
                     {noreply, State#state{ id = Id }};
     %%-------------------------------------------------------------- Initialize
     %% @Locations  - [{X,Y},....]
     %% @Flock_List - [ip1,ip2,ip3,ip4]
-    {init,Locations,Flock_List} ->  io:format("TEST:{init,Locations,Flock_List} Locations: ~p~n Flock_List: ~p~n",[Locations,Flock_List]),
+    {init,Locations,Flock_List} ->
                                     Agents = spawn_flock(Locations,State),
                                     Count = count(Locations),
                                     NewState = State#state{ agents = Agents, flocks = Flock_List, max = Count, num = Count},
                                     {noreply,NewState};
     %-------------------------------------------------------------- Master request
-    {master_request}  ->  io:format("MASTER req \n",[]),
+    {master_request}  ->
                           request_new_locations(State),
                           {noreply,State};
     %-------------------------------------------------------------- FLock request
-    {flock_request,Pid,Location} -> %io:format("Flock REQ\n",[]),
+    {flock_request,Pid,Location} ->
                                      Neighbors = get_Neighbors(State#state.agents,Location,State#state.radius),
                                       %%@TODO CHECK OPTION FOR EXCLUDING
                                      Pid ! {generate_loc,Neighbors},
                                      {noreply,State};
-    %%---------------------------------
-    {flock_down,Transferred,Id} -> New_flocks = change_margins(Id,State#state.flocks),
+    %--------------------------------------------------------------
+    {flock_down,Transferred,Id} ->
+                                   New_flocks = change_margins(Id,State#state.flocks),
                                    update_online(State),
                                    {noreply,State#state{agents_n = State#state.agents_n ++ Transferred,
                                                         flocks = New_flocks}};
+    %--------------------------------------------------------------
     {insert,New_Locations} ->
-      io:format("TEST:{insert,New_Locations} New_Locations: ~p~n STATE: ~p~n",[New_Locations,State]),
-      Agents = spawn_flock(New_Locations,State),
-      Count = count(New_Locations),
-      NewState = State#state{ agents_n = State#state.agents_n ++ Agents,
-                              max = State#state.max + Count,
-                              num = State#state.num + Count},
-                              {noreply,NewState};
+                                    Agents = spawn_flock(New_Locations,State),
+                                    Count = count(New_Locations),
+                                    NewState = State#state{ agents_n = State#state.agents_n ++ Agents,
+                                                            max = State#state.max + Count,
+                                                            num = State#state.num + Count},
+                                                            {noreply,NewState};
+    %--------------------------------------------------------------
     {update,Agent} ->
-      Flock_i = match(State#state.flocks,
-                      State#state.dimension,
-                      get_loc(Agent)),
-      if State#state.myname== Flock_i ->
-        %io:format("STAY",[]),
-        NewNum = State#state.num - 1,
-        NewAgentList = State#state.agents_n ++ [Agent],
-        NewState = State#state{agents_n = NewAgentList,num = NewNum};
-        true->
-          %io:format("Leave",[]),
-          gen_server:cast(Flock_i,{add,Agent}),
-          NewMax = State#state.max -1, NewNum = State#state.num - 1 ,
-          NewState = State#state{max = NewMax, num = NewNum}
-      end,
-      if NewState#state.num == 0 ->
-        State#state.id ! {package,change_setup(NewState#state.agents_n)},
-        %gen_server:cast(NewState#state.master,{NewState#state.myname,NewState#state.agents}),
-        FinalState = NewState#state{ num = NewState#state.max,agents = NewState#state.agents_n, agents_n = []};
-        true-> FinalState =NewState end,
-    {noreply,FinalState};
-    %%---------------------------------
+                                  Flock_i = match(State#state.flocks,
+                                                  State#state.dimension,
+                                                  get_loc(Agent)),
+                                  if State#state.myname== Flock_i ->
+                                    %io:format("STAY",[]),
+                                    NewNum = State#state.num - 1,
+                                    NewAgentList = State#state.agents_n ++ [Agent],
+                                    NewState = State#state{agents_n = NewAgentList,num = NewNum};
+                                    true->
+                                      %io:format("Leave",[]),
+                                      gen_server:cast(Flock_i,{add,Agent}),
+                                      NewMax = State#state.max -1, NewNum = State#state.num - 1 ,
+                                      NewState = State#state{max = NewMax, num = NewNum}
+                                  end,
+                                  if NewState#state.num == 0 ->
+                                    %State#state.id ! {package,change_setup(NewState#state.agents_n)},
+                                    gen_server:cast({comm,'almog@h-MBP-sl-lmwg'},{package,change_setup(NewState#state.agents_n),NewState#state.id}),
+                                    FinalState = NewState#state{ num = NewState#state.max,agents = NewState#state.agents_n, agents_n = []};
+                                    true-> FinalState =NewState end,
+                                    {noreply,FinalState};
+    %--------------------------------------------------------------
     {add,Agent} ->
-      get_Pid(Agent) ! {change_flock, State#state.myname},
-      NewAgentList = State#state.agents_n ++ [Agent],
-      NewState= State#state{agents_n = NewAgentList,
-                          max = State#state.max +1,
-                          num = State#state.num +1},
-        {noreplay,NewState} ;
+                                  get_Pid(Agent) ! {change_flock, State#state.myname},
+                                  NewAgentList = State#state.agents_n ++ [Agent],
+                                  NewState= State#state{agents_n = NewAgentList,
+                                  max = State#state.max +1,num = State#state.num +1},
+                                  {noreplay,NewState} ;
+
+    %--------------------------------------------------------------
+    state -> io:format("The state is: ~p ~n ",[State]),{noreply,State};
+    %--------------------------------------------------------------
     _ -> {noreply,State}
   end.
 
@@ -147,7 +154,6 @@ request_new_locations(State)->
 
 rnl_loop([],_) -> [];
 rnl_loop([{Pid,{Location,_,_}}|T],Flocks)->
-  io:format("TEST: rnl_loop. Pid: ~p~n Location: ~p~n Flocks: ~p~n",[Pid,Location,Flocks]),
   [gen_server:cast({flock_v4,Ip} ,{flock_request,Pid,Location}) ||  Ip <- Flocks],
   rnl_loop(T,Flocks).
 
@@ -178,7 +184,7 @@ agent(Location, Di_2D,Color, Flock, Temp_List, Pending, Online) ->
     {generate_loc,Neighbors} -> Current = Pending -1,
       if Current =:= 0 ->
         {New_loc,New_Di} = generate_Stats(Temp_List ++ Neighbors,Location,Di_2D,Color,{1300,700}),
-        gen_server:cast(Flock,{update,{self(),{New_loc,New_Di,Color}}}),
+        gen_server:cast({flock_v4,Flock},{update,{self(),{New_loc,New_Di,Color}}}),
         agent(New_loc,New_Di,Color,Flock, [], Online, Online );
         true ->
           agent(Location,Di_2D,Color,Flock, Temp_List ++ Neighbors, Current, Online )
