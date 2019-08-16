@@ -3,8 +3,7 @@
 
 -export([start_link/0]).
 
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-  terminate/2, code_change/3]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -export([handleMore/1,splitUtilities/1]).
 
@@ -36,25 +35,25 @@ handle_call(Request, _, State = #{registers := OldNum, list_mem := Members}) ->
     % registers + 1
     {register,Name} ->
                     if
-                      OldNum + 1 =:= 4 -> io:format("TEST: 4 REGISTERS. NAME: ~p~n STATE: ~p~n",[Name,State]),
+                      OldNum + 1 =:= 4 ->io:format("TEST: 4 REGISTERS. NAME: ~p~n STATE: ~p~n",[Name,State]),
                                           graphic:start_link(comm),
                                           erlang:monitor_node(Name,true),
-                                          %gen_server:cast({flock_v4,Name},{connect,OldNum + 1}),
+                                          gen_server:cast({flock_v4,Name},{connect,OldNum + 1}),
                                           % Form of message the send to nodes:  {ok,id_number}
                                           % reply to the remote node 'ok' and saves him in the States - { id => node, node => id }
-                                          {reply,{connect,OldNum + 1},State#{registers := OldNum + 1, OldNum + 1 := {Name,[]}, Name => OldNum + 1,
+                                          {noreply,State#{registers := OldNum + 1, OldNum + 1 := {Name,[]}, Name => OldNum + 1,
                                             list_mem := [{OldNum + 1,Name}]++ Members}};
 
                       true ->             io:format("TEST: REGISTER. NAME: ~p~n STATE: ~p~n",[Name,State]),
                                            erlang:monitor_node(Name,true),
                                           % Form of message the send to nodes:  {ok,id_number}
                                            gen_server:cast({flock_v4,Name},{connect,OldNum + 1}),
-                                          {reply,{connect,OldNum + 1},State#{registers := OldNum + 1, OldNum + 1 := {Name,[]}, Name => OldNum + 1,
+                                          {noreply,State#{registers := OldNum + 1, OldNum + 1 := {Name,[]}, Name => OldNum + 1,
                                             list_mem := [{OldNum + 1,Name}]++ Members, alives_1 => [4,3,2], alives_4 => [3,2,1],
                                             alives_3 => [2,1,4], alives_2 => [1,4,3]}}
                     end;
 
-    ________________                    ->    {noreply, State}
+    ________________                    ->    io:format("TEST: PROBLEM. REQ: ~p~n STATE: ~p~n",[Request,State]),{noreply, State}
 
   end.
 
@@ -62,8 +61,8 @@ handle_call(Request, _, State = #{registers := OldNum, list_mem := Members}) ->
 handle_cast(_Msg, State = #{numPackets := Num, registers := NumReg}) ->
   case _Msg of
     % gets {package,Id,Data} from the client, sends to graphic.
-    {package,Data}  ->          gen_server:cast(graphic,{data,Data}),
-                                io:format("TEST: cast package receive. Nessage: ~p ~nState: ~p ~n ",[_Msg,State]),
+    {package,Data}  ->          io:format("TEST: cast package receive. Nessage: ~p ~nState: ~p ~n ",[_Msg,State]),
+                                gen_server:cast(graphic,{data,Data}),
                                 % if number of packets to paint equals to register number so we send the order to paint
                                 if
                                   Num =:= NumReg -> gen_server:cast(graphic,paint),{noreply,State#{numPackets :=0}} ;
@@ -77,19 +76,18 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1},
             alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4, list_of_deads := ListOfDeads}) ->
   case Msg of
     % creates the process who's gonna handle the asks for more data from other nodes
-    {go,FirstData} ->
-                            io:format("TEST: info {go,FirstData}. Message: ~p ~nState: ~p ~n ",[Msg,State]),
+    {go,FirstData} ->       io:format("TEST: info {go,FirstData}. Message: ~p ~nState: ~p ~n ",[Msg,State]),
                             ListOfLocations = gen_Locations({250,250},FirstData),
                             MapLocations = distribute(ListOfLocations,{250,250},[],[],[],[]),
                             sendInitial(MapLocations,Members,State,1),
                             %Loopi = spawn(fun() -> askForNewData(Members) end),
-                            {noreply,State#{loopi := test, 1 := {N_1,lists:nth(1,MapLocations)},
+                             Loopi = spawn(fun() -> askForNewData(Members,10) end),
+                            {noreply,State#{loopi := Loopi, 1 := {N_1,lists:nth(1,MapLocations)},
                             2 := {N_2,lists:nth(2,MapLocations)}, 3 := {N_3,lists:nth(3,MapLocations)},
                             4 := {N_4,lists:nth(4,MapLocations)}}};
 
-     % Need to fix
     {update,NumToAdd}  ->
-                         io:format("TEST: info {update,NumToADD}. Message: ~p ~nState: ~p ~n ",[Msg,State]),
+                          io:format("TEST: info {update,NumToADD}. Message: ~p ~nState: ~p ~n ",[Msg,State]),
                          MapLocations = handleMore(NumToAdd),  % sends to handle more function with the update registers value
                          if
                          Num =:= 4 ->
@@ -101,13 +99,12 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1},
                         end;
 
     % The user ask to close the program
-
-     stop ->          io:format("TEST: info stop: ~p ~n ~p ~n ",[Msg,State]),
-                      close(Members),{noreply,State};
+     stop ->           io:format("TEST: info stop: ~p ~n ~p ~n ",[Msg,State]),
+                       close(Members),{noreply,State};
 
     % node is down :(
-
-    {nodedown, Node} -> io:format("TEST: info nodedown. Node: ~p ~nState:  ~p ~n ",[Node,State]),
+    {nodedown, Node} ->
+                        io:format("TEST: info nodedown. Node: ~p ~nState:  ~p ~n ",[Node,State]),
                         if
                           Num =:= 1 ->  gen_server:cast(graphic,stop),close([]); % all nodes crashed. we close the program
                           true ->
@@ -117,7 +114,7 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1},
                                         Neighbour = getNeighbour(CrashId,NE1,NE2,NE3,NE4),
                                         [LI1,LI2,LI3,LI4] = cleanSubLists(CrashId,NE1,NE2,NE3,NE4),
                                         [Birds1,Birds2,Birds3,Birds4] = arrangeBirds(CrashId,Neighbour,[L1,L2,L3,L4]),
-                                        handleCrashes(ListOfCrashed,Neighbour),
+                                        handleCrashes(ListOfCrashed,element(1,maps:get(Neighbour,State)),CrashId),
                                         gen_server:cast(graphic,{down,Num-1}),
                                         % update the status with the right nodes alive
                                         {noreply,State#{registers := Num - 1, CrashId := {dead,[]}, Node := dead,
@@ -127,7 +124,8 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1},
                                           4 := {N_4,Birds4}}}
                         end;
     % dont care
-    _    ->             io:format("TEST: info else: ~p ~n",[Msg]),{noreply,State}
+    _    ->               io:format("TEST: info else: ~p ~n",[Msg]),
+                          {noreply,State}
   end.
 
 
@@ -171,9 +169,9 @@ distribute([Loc|T], Dimensions,S1,S2,S3,S4)->
 % ---- TO ADD ID OF THE MODE WHO'S FALL TO THE TUPLE  ------
 
  % gets the birds of the crashed node and sends to his neighbour
-handleCrashes(ListOfCrashed,NodeToSend)  ->
-     io:format("TEST: handleCrashes. NodeToSend: ~p ~nListOfCrashed:  ~p ~n ",[NodeToSend,ListOfCrashed]).
-      %gen_server:cast({flock_v4,NodeToSend},{insert,ListOfCrashed}).
+handleCrashes(ListOfCrashed,NodeToSend,CrashId)  ->
+      io:format("TEST: handleCrashes. NodeToSend: ~p ~nListOfCrashed:  ~p ~n CrashId ~p~n ",[NodeToSend,ListOfCrashed,CrashId]),
+      gen_server:cast({flock_v4,NodeToSend},{flock_down,ListOfCrashed,CrashId}).
 
 
 arrangeBirds(CrashId,Neighbour,[L1,L2,L3,L4]) ->
@@ -199,7 +197,6 @@ arrangeBirds(CrashId,Neighbour,[L1,L2,L3,L4]) ->
               1 -> [L1 ++ L4, L2, L3, []]
           end
     end.
-
 
 
 
@@ -244,18 +241,23 @@ cleanSubLists(CrashId,NE1,NE2,NE3,NE4) ->
 % Form of message the send to nodes:  {master_request}
 % -------------------------------------------------------------------------
 
-
 % sends requests to the nodes every 40ms - Form of message {master_request}
-askForNewData(Members) ->
+%%askForNewData(Members) ->
+%%  loopByTime(Members),
+%%  timer:sleep(40),
+%%  askForNewData(Members).
+
+askForNewData(Members,0) -> done;
+askForNewData(Members,Counter) ->
   loopByTime(Members),
   timer:sleep(40),
-  askForNewData(Members).
+  askForNewData(Members,Counter-1).
 
 loopByTime([]) -> done;
 loopByTime([ Node | T ]) ->
-    %gen_server:cast({flock_v4,Node},{master_request}),
+  io:format("TEST: loopByTime. NodeToSend: ~p ~n ",[element(2,Node)]),
+    gen_server:cast({flock_v4,element(2,Node)},{master_request}),
     loopByTime(T).
-
 
 % -------------------------------------------------------------------------
 % sends the start data of birds to each node. The message is {start,List}
@@ -264,27 +266,28 @@ loopByTime([ Node | T ]) ->
 sendInitial([],_,_,_) ->
     done;
 sendInitial([ H | T ], Members, State, Offset) ->
-  sendPost(Members,H,element(1,maps:get(Offset,State))),
+  sendPost(membersToList(Members,[]),H,element(1,maps:get(Offset,State))),
   sendInitial(T, Members,State,Offset+1).
 
 sendPost(Members,List,Member) ->
-  io:format("TEST: sendPost. Members: ~p ~nList:  ~p ~nMember:  ~p ~n ",[Members,List,Member]).
-  %gen_server:cast({flock_v4,Member},{init,List,Members}).
-
+  io:format("TEST: sendpost. List: ~p~n Members: ~p~n",[List,Members]),
+  gen_server:cast({flock_v4,Member},{init,List,Members}).
 
 
 sendWhile([],_,_,_,_) ->
   done;
 sendWhile([H|_],L1,L2,L3,L4) ->
   case element(1,H) of
-     1 -> gen_server:cast({flock_v4,element(2,H)},{insert,L1});
-     2 -> gen_server:cast({flock_v4,element(2,H)},{insert,L2});
-     3 -> gen_server:cast({flock_v4,element(2,H)},{insert,L3});
-     4 -> gen_server:cast({flock_v4,element(2,H)},{insert,L4})
+     1 -> io:format("TEST: sendWhile. List: ~p~n Members: ~p~n",[L1,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L1});
+     2 -> io:format("TEST: sendWhile. List: ~p~n Members: ~p~n",[L2,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L2});
+     3 -> io:format("TEST: sendWhile. List: ~p~n Members: ~p~n",[L3,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L3});
+     4 -> io:format("TEST: sendWhile. List: ~p~n Members: ~p~n",[L4,element(2,H)]),gen_server:cast({flock_v4,element(2,H)},{insert,L4})
   end.
 
 
-
+membersToList([],Acc) -> Acc;
+membersToList([H|T],Acc) ->
+  membersToList(T, [element(2,H)] ++ Acc).
 
 
 
