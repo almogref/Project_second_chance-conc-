@@ -61,12 +61,14 @@ handle_call(Request, _, State = #{registers := OldNum, list_mem := Members}) ->
 handle_cast(_Msg, State = #{numPackets := Num, registers := NumReg}) ->
   case _Msg of
     % gets {package,Id,Data} from the client, sends to graphic.
-    {package,Data}  ->          io:format("TEST: cast package receive. Nessage: ~p ~nState: ~p ~n ",[_Msg,State]),
+    {package,Data,Id}  ->       io:format("TEST: cast package receive. Nessage: ~p ~nState: ~p ~n ",[_Msg,State]),
+                                {Node,_} = maps:get(Id,State),
                                 gen_server:cast(graphic,{data,Data}),
                                 % if number of packets to paint equals to register number so we send the order to paint
                                 if
-                                  Num =:= NumReg -> gen_server:cast(graphic,paint),{noreply,State#{numPackets :=0}} ;
-                                  true ->           {noreply,State#{numPackets := Num + 1}}
+                                  Num =:= NumReg -> gen_server:cast(graphic,paint),{noreply,State#{numPackets :=0,
+                                                    Id := {Node,Data}}} ;
+                                  true ->           {noreply,State#{numPackets := Num + 1,Id := {Node,Data}}}
                                 end;
 
     test -> io:format("TEST: The state is: ~p ~n ",[State]),{noreply,State};
@@ -84,7 +86,7 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1},
                             MapLocations = distribute(ListOfLocations,{250,250},[],[],[],[]),
                             sendInitial(MapLocations,Members,State,1),
                             %Loopi = spawn(fun() -> askForNewData(Members) end),
-                             Loopi = spawn(fun() -> askForNewData(Members,10) end),
+                             Loopi = spawn(fun() -> askForNewData(Members,5) end),
                             {noreply,State#{loopi := Loopi, 1 := {N_1,lists:nth(1,MapLocations)},
                             2 := {N_2,lists:nth(2,MapLocations)}, 3 := {N_3,lists:nth(3,MapLocations)},
                             4 := {N_4,lists:nth(4,MapLocations)}}};
@@ -164,6 +166,10 @@ distribute([Loc|T], Dimensions,S1,S2,S3,S4)->
         true-> distribute(T,Dimensions,S1, S2,S3 ,S4 ++ [Loc])  end
   end.
 
+
+updateData(Data,Id,State = #{1 := {_,L1}, 2 := {_,L2},3 := {_,L3}, 4 := {_,L4}}) ->
+
+  done.
 % -------------------------------------------------------------------------
 % Form of message the send to nodes:  {add,ListOfCrashed}
 % -------------------------------------------------------------------------
@@ -264,7 +270,7 @@ cleanSubLists(CrashId,NE1,NE2,NE3,NE4) ->
 askForNewData(Members,0) -> done;
 askForNewData(Members,Counter) ->
   loopByTime(Members),
-  timer:sleep(40),
+  timer:sleep(200),
   askForNewData(Members,Counter-1).
 
 loopByTime([]) -> done;
