@@ -60,9 +60,12 @@ handle_call(Request, _, State = #{registers := OldNum, list_mem := Members}) ->
 
 handle_cast(_Msg, State = #{numPackets := Num, registers := NumReg}) ->
   case _Msg of
-    % gets {package,Id,Data} from the client, sends to graphic.
-    {package,Data,Id}  ->
+    {package,[],Id}    ->       % This node doesnt have birds. We ignore him and dont send to graphic.
+                                {noreply,State};
+
+    {package,Data,Id}  ->       % Gets {package,Id,Data} from the client, sends to graphic.
                                 {Node,_} = maps:get(Id,State),
+                                io:format("Graphic send data: ~p ~n ",[Data]),
                                 gen_server:cast(graphic,{data,Data}),
                                 % if number of packets to paint equals to register number so we send the order to paint
                                 if
@@ -92,12 +95,12 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1},
                             4 := {N_4,lists:nth(4,MapLocations)}}};
 
     {update,NumToAdd}  ->
-                         MapLocations = handleMore(NumToAdd),  % sends to handle more function with the update registers value
+                         [NL1,NL2,NL3,NL4] = MapLocations = handleMore(NumToAdd),  % sends to handle more function with the update registers value
                          if
-                         Num =:= 4 ->
-                                     {noreply,State#{ 1 := {N_1,L1 ++ lists:nth(1,MapLocations)},
-                                       2 := {N_2,L2 ++ lists:nth(2,MapLocations)}, 3 := {N_3,L3 ++ lists:nth(3,MapLocations)},
-                                       4 := {N_4,L4 ++ lists:nth(4,MapLocations)} }};
+                         Num =:= 4 ->  sendWhile(Members,NL1,NL2,NL3,NL4),
+                                       {noreply,State#{1 := {N_1,L1 ++ NL1},
+                                       2 := {N_2,L2 ++ NL2}, 3 := {N_3,L3 ++ NL3},
+                                       4 := {N_4,L4 ++ NL4}}};
                          % we need to check who is dead
                          true -> {noreply,reArange(State,MapLocations,ListOfDeads)}
                         end;
@@ -207,8 +210,8 @@ handleMore(NumToAdd) ->
 
 
 % NE(i) is lists of alive neighbours(clockwise) of node i
-reArange(State = #{list_mem := Members, 1 := {_,L1}, 2 := {_,L2},3 := {_,L3}, 4 := {_,L4}},_,[]) ->
-    sendWhile(Members,L1,L2,L3,L4), % Sends the new lists to all members alive, avoids duplicate requests :)
+reArange(State ,_,[]) ->
+    %sendWhile(Members,L1,L2,L3,L4), % Sends the new lists to all members alive, avoids duplicate requests :)
     State;
 reArange(State = #{alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4}, MapLocations, [H|T]) ->
     {IdToSend,IdDead,BirdsAlive} =   case H of
@@ -219,6 +222,7 @@ reArange(State = #{alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 :
                                         4  -> {lists:nth(1,NE4),4,element(2,maps:get(lists:nth(1,NE4),State))}
                                       end,
       NodeToSend = maps:get(IdToSend,State),
+      gen_server:cast({flock_v4,element(1,NodeToSend)},{insert,H}),
       NewList = lists:nth(IdToSend,MapLocations) ++ lists:nth(IdDead,MapLocations) ++ BirdsAlive,
       reArange(State#{IdToSend := {element(1,NodeToSend),NewList}},MapLocations,T).
 
@@ -281,8 +285,6 @@ sendInitial([ H | T ], Members, State, Offset) ->
 
 sendPost(Members,List,Member) ->
   gen_server:cast({flock_v4,Member},{init,List,Members}).
-
-
 
 membersToList([],Acc) -> Acc;
 membersToList([H|T],Acc) ->
