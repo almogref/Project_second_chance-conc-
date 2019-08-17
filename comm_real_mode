@@ -98,11 +98,10 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1},
                          [NL1,NL2,NL3,NL4] = MapLocations = handleMore(NumToAdd),  % sends to handle more function with the update registers value
                          if
                          Num =:= 4 ->  sendWhile(Members,NL1,NL2,NL3,NL4),
-                                       {noreply,State#{1 := {N_1,L1 ++ NL1},
-                                       2 := {N_2,L2 ++ NL2}, 3 := {N_3,L3 ++ NL3},
-                                       4 := {N_4,L4 ++ NL4}}};
+                                       {noreply,State};
                          % we need to check who is dead
-                         true -> {noreply,reArange(State,MapLocations,ListOfDeads)}
+                         true ->       reArange(State,MapLocations,ListOfDeads),
+                                       {noreply,State}
                         end;
 
     % The user ask to close the program
@@ -211,20 +210,18 @@ handleMore(NumToAdd) ->
 
 % NE(i) is lists of alive neighbours(clockwise) of node i
 reArange(State ,_,[]) ->
-    %sendWhile(Members,L1,L2,L3,L4), % Sends the new lists to all members alive, avoids duplicate requests :)
-    State;
+     State;
 reArange(State = #{alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4}, MapLocations, [H|T]) ->
-    {IdToSend,IdDead,BirdsAlive} =   case H of
+     IdToSend =                        case H of
                                         % GETS THE BIRDS LIST OF THE NEIGHBOUR
-                                        1  -> {lists:nth(1,NE1),1,element(2,maps:get(lists:nth(1,NE1),State))};
-                                        2  -> {lists:nth(1,NE2),2,element(2,maps:get(lists:nth(1,NE2),State))};
-                                        3  -> {lists:nth(1,NE3),3,element(2,maps:get(lists:nth(1,NE3),State))};
-                                        4  -> {lists:nth(1,NE4),4,element(2,maps:get(lists:nth(1,NE4),State))}
+                                        1  -> lists:nth(1,NE1);
+                                        2  -> lists:nth(1,NE2);
+                                        3  -> lists:nth(1,NE3);
+                                        4  -> lists:nth(1,NE4)
                                       end,
       NodeToSend = maps:get(IdToSend,State),
-      gen_server:cast({flock_v4,element(1,NodeToSend)},{insert,H}),
-      NewList = lists:nth(IdToSend,MapLocations) ++ lists:nth(IdDead,MapLocations) ++ BirdsAlive,
-      reArange(State#{IdToSend := {element(1,NodeToSend),NewList}},MapLocations,T).
+      gen_server:cast({flock_v4,element(1,NodeToSend)},{insert,lists:nth(H,MapLocations)++lists:nth(IdToSend,MapLocations)}),
+      reArange(State,MapLocations,T).
 
 sendWhile([],_,_,_,_) ->
   done;
