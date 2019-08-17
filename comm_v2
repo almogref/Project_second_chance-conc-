@@ -62,6 +62,7 @@ close(Members) ->
 % lists of members get upgrade as well, [ {id_number,ip_node} , ... ]
 % registers + 1
 %-----------------------------------------------------------------------------------------------------------------------
+
 handle_call(Request,_,State = #{registers := OldNum, list_mem := Members}) ->
   case Request of
     {register,Name} ->
@@ -72,7 +73,6 @@ handle_call(Request,_,State = #{registers := OldNum, list_mem := Members}) ->
                           gen_server:cast({flock_v4,Name},{connect,OldNum+1}),
                           {noreply,State#{registers := OldNum+1, OldNum+1 := {Name,ets:new(Name,[set])},
                           Name => OldNum+1, list_mem := [{OldNum+1,Name}]++Members}};
-
                   true ->
                           erlang:monitor_node(Name,true),
                           gen_server:cast({flock_v4,Name},{connect,OldNum+1}),
@@ -81,18 +81,17 @@ handle_call(Request,_,State = #{registers := OldNum, list_mem := Members}) ->
                end;
 
     _ElseWhere      ->    {noreply, State}
-
   end.
 
 %---------------------------------------------HANDLE-CAST---------------------------------------------------------------
-% We get the following asynchronous messages:
+% We get the following asynchronous messages-
 %
-% 1. {package,Data,Id} - incoming list of data that contains new data on the birds from the sender slave,The data can an
+% 1. {package,Data,Id}:  incoming list of data that contains new data on the birds from the sender slave,The data can an
 %                        empty list so we cover that possibility in the message passing. When we gets a new package
 %                        of data, we upgrade the state of the comm_v2 server with it and sending it to graphic that
 %                        takes charge from there. Empty packages will be ignored.
 %
-% 2. state -             ask for that current state of the server. We did it for debugging purposes.
+% 2. state:              ask for that current state of the server. We did it for debugging purposes.
 %-----------------------------------------------------------------------------------------------------------------------
 
 handle_cast(_Msg,State = #{numPackets := Num, registers := NumReg}) ->
@@ -121,16 +120,16 @@ handle_cast(_Msg,State = #{numPackets := Num, registers := NumReg}) ->
   end.
 
 %-----------------------------------------------HANDLE-INFO-------------------------------------------------------------
-% We get the following messages:
+% We get the following messages-
 %
-% 1. {go,FirstData} - message that received from the graphic server only when the user request to start and send initial
-%                     values(Number of birds to start with). We generate randomly locations and send to each slave the
-%                     list of locations in his sector which he needs to manage.
-% 2. {update,NumToAdd} - message that received from the graphic server when the user wants to add more birds.
-%                        We generate new locations randomly and sends them to the slaves that alive. When there is a
-%                        slave which is status is "dead" we send his extra new locations to his neighbour(neighbour
-%                        definition is clockwise e.g. node area 1 is the neighbour of node area 2)
-% 3. {nodedown,Node} - message the received when a slave is down. If all slaves(we have total of 4) are down, we close
+% 1.{go,FirstData}:    message that received from the graphic server only when the user request to start and send initial
+%                      values(Number of birds to start with). We generate randomly locations and send to each slave the
+%                      list of locations in his sector which he needs to manage.
+% 2.{update,NumToAdd}: message that received from the graphic server when the user wants to add more birds.
+%                      We generate new locations randomly and sends them to the slaves that alive. When there is a
+%                      slave which is status is "dead" we send his extra new locations to his neighbour(neighbour
+%                      definition is clockwise e.g. node area 1 is the neighbour of node area 2)
+% 3.{nodedown,Node}:   message the received when a slave is down. If all slaves(we have total of 4) are down, we close
 %                      the comm_v2 server and graphic, otherwise we initial the procedure of Handle-Crashes.
 %                      Handle-Crashes procedure: We transfer all the last income data from the slave who fall to his
 %                      neighbour. We delete from the field "list_mem" the slave who fall and delete his ets table from
@@ -171,7 +170,8 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 :
                     ets:delete_all_objects(element(2,maps:get(CrashId,State))),
                     Neighbour = get_neighbour(CrashId,NE1,NE2,NE3,NE4),
                     [LI1,LI2,LI3,LI4] = clean_sub_lists(CrashId,NE1,NE2,NE3,NE4),
-                    [Birds1,Birds2,Birds3,Birds4] = arrange_tables(CrashId,Neighbour,[T1,T2,T3,T4]),
+                    [Birds1,Birds2,Birds3,Birds4] = handle_crash(CrashId,Neighbour,[T1,T2,T3,T4]),
+                    %[Birds1,Birds2,Birds3,Birds4] = arrange_tables(CrashId,Neighbour,[T1,T2,T3,T4]),
                     gen_server:cast({flock_v4,element(1,maps:get(Neighbour,State))},{flock_down,ListOfCrashed,CrashId}),
                     gen_server:cast(graphic,{down,Num-1}),
                     {noreply,State#{registers := Num-1, CrashId := {dead,[]}, Node := dead, list_mem := NewMembers,
@@ -244,33 +244,6 @@ get_neighbour(CrashId,NE1,NE2,NE3,NE4) ->
 clean_sub_lists(CrashId,NE1,NE2,NE3,NE4) ->
               [lists:delete(CrashId,NE1),lists:delete(CrashId,NE2),lists:delete(CrashId,NE3),lists:delete(CrashId,NE4)].
 
-%----------------------------------------------ARRANGE-TABLES-----------------------------------------------------------
-% This function re-arrange the tables of each slave. We gets here when a slave is down and we need to transfer his data.
-%-----------------------------------------------------------------------------------------------------------------------
-
-arrange_tables(CrashId,Neighbour,[L1,L2,L3,L4]) ->
-              case CrashId of
-                1 -> case Neighbour of
-                       4 -> [[],L2,L3,L4 ++ L1];
-                       3 -> [[],L2,L3 ++ L1,L4];
-                       2 -> [[],L2 ++ L1, L3, L4]
-                     end;
-                2 -> case Neighbour of
-                       1 -> [L1 ++ L2,[],L3,L4];
-                       3 -> [L1,[],L3 ++ L2, L4];
-                       4 -> [L1,[],L3,L1 ++ L4]
-                     end;
-                3 -> case Neighbour of
-                       2 -> [L1,L2 ++ L3, [], L4];
-                       1 -> [L1 ++ L3, L2, [], L4];
-                       4 -> [L1, L2, [], L4 ++ L3]
-                     end;
-                4 -> case Neighbour of
-                       3 -> [L1, L2, L3 ++ L4,[]];
-                       2 -> [L1, L2 ++ L4, L3, []];
-                       1 -> [L1 ++ L4, L2, L3, []]
-                     end
-              end.
 
 %-----------------------------------------REQUESTER-LOOP----------------------------------------------------------------
 % Area of code for the Requester. This process handles the request for new data of birds from each slave alive that
@@ -314,23 +287,23 @@ send_while([H|T],L1,L2,L3,L4) ->
                 end.
 
 %------------------------------------------RE-ARANGE--------------------------------------------------------------------
-%
-% NE(i) is lists of alive neighbours(clockwise) of node i
+% This function handles the event when the user wants to add more birds to the frame and we have number of salves who's
+% in "dead" mode. We need to send the new generated birds of the "dead" slave to his neighbour.
+% NE(i) is lists of alive neighbours(clockwise) of node i.
 %-----------------------------------------------------------------------------------------------------------------------
 
-re_arange(State ,_,[]) ->
-  State;
+re_arange(_,_,[]) ->
+                done_re_arange;
 re_arange(State = #{alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4}, MapLocations, [H|T]) ->
-  IdToSend =                        case H of
-                                      % GETS THE BIRDS LIST OF THE NEIGHBOUR
+ IdToSend =                        case H of
                                       1  -> lists:nth(1,NE1);
                                       2  -> lists:nth(1,NE2);
                                       3  -> lists:nth(1,NE3);
                                       4  -> lists:nth(1,NE4)
                                     end,
-  NodeToSend = maps:get(IdToSend,State),
-  gen_server:cast({flock_v4,element(1,NodeToSend)},{insert,lists:nth(H,MapLocations)++lists:nth(IdToSend,MapLocations)}),
-  re_arange(State,MapLocations,T).
+ NodeToSend = maps:get(IdToSend,State),
+ gen_server:cast({flock_v4,element(1,NodeToSend)},{insert,lists:nth(H,MapLocations)++lists:nth(IdToSend,MapLocations)}),
+ re_arange(State,MapLocations,T).
 
 %------------------------------------------MEMBERS-TO-LIST--------------------------------------------------------------
 % Function that gets the map list_mem and returns list of the members alive right now.
@@ -341,4 +314,38 @@ members_to_list([],Acc) ->
 members_to_list([H|T],Acc) ->
                   members_to_list(T, [element(2,H)] ++ Acc).
 
+%--------------------------------------------HANDLE-CRASH---------------------------------------------------------------
+% This function mission is to update the ets table of each node. We gets here when slave is down, so we need to update
+% our current state of data.
+%-----------------------------------------------------------------------------------------------------------------------
 
+handle_crash(CrashId,Neighbour,[T1,T2,T3,T4]) ->
+                    done.
+
+%----------------------------------------------ARRANGE-TABLES-----------------------------------------------------------
+% This function re-arrange the tables of each slave. We gets here when a slave is down and we need to transfer his data.
+%-----------------------------------------------------------------------------------------------------------------------
+
+arrange_tables(CrashId,Neighbour,[L1,L2,L3,L4]) ->
+  case CrashId of
+    1 -> case Neighbour of
+           4 -> [[],L2,L3,L4 ++ L1];
+           3 -> [[],L2,L3 ++ L1,L4];
+           2 -> [[],L2 ++ L1, L3, L4]
+         end;
+    2 -> case Neighbour of
+           1 -> [L1 ++ L2,[],L3,L4];
+           3 -> [L1,[],L3 ++ L2, L4];
+           4 -> [L1,[],L3,L1 ++ L4]
+         end;
+    3 -> case Neighbour of
+           2 -> [L1,L2 ++ L3, [], L4];
+           1 -> [L1 ++ L3, L2, [], L4];
+           4 -> [L1, L2, [], L4 ++ L3]
+         end;
+    4 -> case Neighbour of
+           3 -> [L1, L2, L3 ++ L4,[]];
+           2 -> [L1, L2 ++ L4, L3, []];
+           1 -> [L1 ++ L4, L2, L3, []]
+         end
+  end.
