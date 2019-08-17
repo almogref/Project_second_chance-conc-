@@ -19,7 +19,6 @@
 start_link(COMM) ->
   gen_statem:start_link({local, graphic}, graphic, COMM, []).
 
-
 init(COMM) ->
   process_flag(trap_exit, true),
   wx:new(),
@@ -47,7 +46,6 @@ init(COMM) ->
     ,numDelivery => 0, morty => 4},
   {ok, waitForData, State}.
 
-
 callback_mode() ->
   state_functions.
 
@@ -57,14 +55,12 @@ terminate(_Reason, _State, _Data) ->
 code_change(_Vsn, State, Data, _Extra) ->
   {ok,State,Data}.
 
-
 loadBirds() ->
   #{1 => wxImage:new("red_t_1.png"),
     2 => wxImage:new("blue_t_1.png"),
     3 => wxImage:new("black_t_1.png"),
     4 => wxImage:new("orange_t_1.png"),
     5 => wxImage:new("yellow_t_1.png")}.
-
 
 waitForData(info,_,State) ->
   {keep_state, State};
@@ -92,7 +88,6 @@ waitForData(cast,stop,State) ->
 
 waitForData(cast,{down,Num},State) ->
   {keep_state, State#{ morty := Num}};
-
 
 waitForData(cast,_,State) ->
   {keep_state, State}.
@@ -131,14 +126,12 @@ paint(Data, State) ->
   BufferDC=maps:get(bufferDC, State),
   paintBirds(BufferDC, BirdsImages, Data).
 
-
 paintBirds(_, _, []) ->
   finishPaintBirds;
 
-
-paintBirds(BufferDC, BirdsImages, [ {{X,Y},Angle,_,Color} | T ]) ->
+paintBirds(BufferDC, BirdsImages, [ {{X,Y},_,_,Color} | T ]) ->
   Coordinates = {round(X),round(Y)},
-  AngelInRadians = Angle +math:pi(),
+  AngelInRadians = 0,
   case Color of
     red ->
       Image= wxImage:rotate (maps:get(1,BirdsImages), AngelInRadians, {10,10}),
@@ -224,3 +217,4 @@ getReady(State) ->
   Background = maps:get(background, State),
   wxDC:drawBitmap(BufferDC, Background, {0,0}),
   State#{ clientDC => ClientDC ,bufferDC => BufferDC, numDelivery => 1}.
+
