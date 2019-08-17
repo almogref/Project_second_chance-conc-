@@ -34,7 +34,7 @@ init([Name]) ->
     agents_n =  [],
     dimension = {1300,700},
     radius = 250,
-    online = 1,
+    online = 4,
     drive_factor = 3,
     w1 = 1,
     w2 = 1,
@@ -60,9 +60,13 @@ handle_cast(Request, State) ->
                                     NewState = State#state{ agents = Agents, flocks = Flock_List, max = Count, num = Count},
                                     {noreply,NewState};
     %-------------------------------------------------------------- Master request
-    {master_request}  ->
-                          request_new_locations(State),
-                          {noreply,State};
+    {master_request}  ->  io:format("TEST: master_request.~n ",[]),
+      if State#state.max == 0 ->
+        io:format("EMPTY NODE SIDE.~n ",[]),
+        gen_server:cast({comm,'almog@h-MBP-sl-lmwg'},{package,[],State#state.id});
+        true ->
+          request_new_locations(State)end,
+      {noreply,State};
     %-------------------------------------------------------------- FLock request
     {flock_request,Pid,Location} ->
                                      Neighbors = get_Neighbors(State#state.agents,Location,State#state.radius),
@@ -70,11 +74,14 @@ handle_cast(Request, State) ->
                                      Pid ! {generate_loc,Neighbors},
                                      {noreply,State};
     %--------------------------------------------------------------
-    {flock_down,Transferred,Id} ->
-                                   New_flocks = change_margins(Id,State#state.flocks),
-                                   update_online(State),
-                                   {noreply,State#state{agents_n = State#state.agents_n ++ Transferred,
-                                                        flocks = New_flocks}};
+    {flock_down,Transferred,Id} -> io:format("TEST: flock_down. Transferred: ~p~n Id: ~p~n",[Transferred,Id]),
+                                  New_flocks = change_margins(Id,State#state.flocks),
+                                  update_online(State),
+                                  Count = count(Transferred),
+                                  {noreply,State#state{agents_n = State#state.agents_n ++ Transferred,
+                                    num = State#state.num + Count,
+                                    max = State#state.max + Count,
+                                    flocks = New_flocks}};
     %--------------------------------------------------------------
     {insert,New_Locations} ->
                                     Agents = spawn_flock(New_Locations,State),
@@ -95,10 +102,11 @@ handle_cast(Request, State) ->
                                     NewState = State#state{agents_n = NewAgentList,num = NewNum};
                                     true->
                                       %io:format("Leave",[]),
-                                      gen_server:cast(Flock_i,{add,Agent}),
+                                      gen_server:cast({flock_v4,Flock_i},{add,Agent}),
                                       NewMax = State#state.max -1, NewNum = State#state.num - 1 ,
                                       NewState = State#state{max = NewMax, num = NewNum}
                                   end,
+                                  io:format("The Number is: ~p ~n ",[NewState#state.num]),
                                   if NewState#state.num == 0 ->
                                     %State#state.id ! {package,change_setup(NewState#state.agents_n)},
                                     gen_server:cast({comm,'almog@h-MBP-sl-lmwg'},{package,change_setup(NewState#state.agents_n),NewState#state.id}),
@@ -108,10 +116,10 @@ handle_cast(Request, State) ->
     %--------------------------------------------------------------
     {add,Agent} ->
                                   get_Pid(Agent) ! {change_flock, State#state.myname},
-                                  NewAgentList = State#state.agents_n ++ [Agent],
-                                  NewState= State#state{agents_n = NewAgentList,
+                                  NewAgentList = State#state.agents ++ [Agent],
+                                  NewState= State#state{agents = NewAgentList,
                                   max = State#state.max +1,num = State#state.num +1},
-                                  {noreplay,NewState} ;
+                                  {noreply,NewState} ;
 
     %--------------------------------------------------------------
     state -> io:format("The state is: ~p ~n ",[State]),{noreply,State};
@@ -301,7 +309,7 @@ count([]) -> 0;
 count([_|T])-> count(T) + 1.
 
 change_setup([]) ->[];
-change_setup([{Pid,{Loc,Dir,Color}}|T])-> [{Loc,to_Rad(Dir),Pid,Color}] ++ change_setup(T).
+change_setup([{Pid,{Loc,Dir,Color}}|T])-> [{Loc,Dir,Pid,Color}] ++ change_setup(T).
 
 to_Rad({X,Y})-> math:atan2(X,Y).
 
@@ -331,3 +339,4 @@ send_update([]) -> [];
 send_update([{Pid,_}|T])->
   Pid ! {update_Active},
   send_update(T).
+
