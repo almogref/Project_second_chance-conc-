@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @author almog
+%%% @author Almog Refaeli
 %%% @copyright (C) 2019, <COMPANY>
 %%% @doc
 %%%
@@ -14,8 +14,6 @@
 -export([start_link/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
-
--export([handleMore/1,splitUtilities/1]).
 
 
 %-----------------------------------------------START-LINK--------------------------------------------------------------
@@ -37,13 +35,15 @@ init([]) ->
 % Terminate function for callback functions that fails or returns a bad value.
 %-----------------------------------------------------------------------------------------------------------------------
 
-terminate(Reason, _State) -> io:format("Callback function fails. Error message:~n~p ",[Reason]).
+terminate(Reason, _State) ->
+  io:format("Callback function fails. Error message:~n~p ",[Reason]).
 
 %----------------------------------------------CHANGE-CODE--------------------------------------------------------------
 % Change code function.
 %-----------------------------------------------------------------------------------------------------------------------
 
-code_change(_OldVsn, State, _Extra) -> {ok, State}.
+code_change(_OldVsn, State, _Extra) ->
+  {ok, State}.
 
 %------------------------------------------------CLOSE------------------------------------------------------------------
 % Sends close messages to all alive nodes
@@ -113,7 +113,8 @@ handle_cast(_Msg,State = #{numPackets := Num, registers := NumReg}) ->
                 end;
     %----------------state----------------%
     state ->
-                io:format("The state is:~n~p ",[State]),{noreply,State};
+                io:format("The state is:~n~p ",[State]),
+                {noreply,State};
     %--------------DONT-CARE--------------%
     _ElseWhere ->
                 {noreply,State}
@@ -143,7 +144,7 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 :
     %----------{go,FirstData}------------%
     {go,FirstData} ->
                 MapLocations = distribute(gen_locations({1300,700},FirstData),{1300,700},[],[],[],[]),
-                send_initial(MapLocations,Members,State,1),
+                send_initial(MapLocations,members_to_list(Members,[]),State,1),
                 Requester = spawn(fun() -> requester_loop(Members) end),
                 {noreply,State#{requester := Requester}};
     %----------{update,NumToAdd}------------%
@@ -170,7 +171,7 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 :
                     ets:delete_all_objects(element(2,maps:get(CrashId,State))),
                     Neighbour = get_neighbour(CrashId,NE1,NE2,NE3,NE4),
                     [LI1,LI2,LI3,LI4] = clean_sub_lists(CrashId,NE1,NE2,NE3,NE4),
-                    [Birds1,Birds2,Birds3,Birds4] = arrange_tabels(CrashId,Neighbour,[T1,T2,T3,T4]),
+                    [Birds1,Birds2,Birds3,Birds4] = arrange_tables(CrashId,Neighbour,[T1,T2,T3,T4]),
                     gen_server:cast({flock_v4,element(1,maps:get(Neighbour,State))},{flock_down,ListOfCrashed,CrashId}),
                     gen_server:cast(graphic,{down,Num-1}),
                     {noreply,State#{registers := Num-1, CrashId := {dead,[]}, Node := dead, list_mem := NewMembers,
@@ -179,74 +180,97 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 :
                 end;
     %----------------stop-----------------%
     stop ->
-                  close(Members),{noreply,State};
+                  close(Members),
+                  {noreply,State};
     %--------------DONT-CARE--------------%
     _ElseWhere ->
                   {noreply,State}
   end.
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%------------------------------------------- MAINTENANCE-FUNCTIONS -----------------------------------------------------
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%----------------------------------------------GEN-LOCATIONS------------------------------------------------------------
+% Function that uses gen_location function to generate randomly new locations on the screen.
 %-----------------------------------------------------------------------------------------------------------------------
-% ------------------------------------------- MAINTENANCE-FUNCTIONS ----------------------------------------------------
+
+gen_locations(_,0) ->
+                [];
+gen_locations(Dimensions,N) ->
+                [gen_location(Dimensions) | gen_locations(Dimensions,N-1)].
+
+gen_location({Width,Height}) ->
+                {rand:uniform(Width),rand:uniform(Height)}.
+
+%-----------------------------------------------DISTRIBUTE--------------------------------------------------------------
+% Distribute the locations we generated into the right sectors and arrange it in a list of lists which the first index
+% in the output list is the new locations for sector 1, the second index is the new locations for sector 2 and so on.
 %-----------------------------------------------------------------------------------------------------------------------
 
-gen_locations(_,0)->[];
-gen_locations(Dimensions,N)->
-  [gen_location(Dimensions) | gen_locations(Dimensions,N-1)].
+distribute([],_,S1,S2,S3,S4) ->
+                [S1,S2,S3,S4];
 
+distribute([Loc|T], Dimensions,S1,S2,S3,S4) ->
+                {Width,Height} = Dimensions,
+                {X,Y} = Loc,
+                Border_W = Width/2,
+                Border_H = Height/2,
+                if X < Border_W ->
+                  if Y < Border_H -> distribute(T,Dimensions,S1, S2 ++ [Loc],S3,S4);
+                    true-> distribute(T,Dimensions,S1, S2,S3 ++ [Loc],S4) end;
+                  true->
+                    if Y < Border_H -> distribute(T,Dimensions,S1 ++ [Loc], S2,S3,S4);
+                      true-> distribute(T,Dimensions,S1, S2,S3 ,S4 ++ [Loc])  end
+                end.
 
-gen_location({Width,Height}) -> {rand:uniform(Width),rand:uniform(Height)}.
-
-
-distribute([],_,S1,S2,S3,S4)-> [S1,S2,S3,S4];
-
-distribute([Loc|T], Dimensions,S1,S2,S3,S4)->
-  {Width,Height} = Dimensions,
-  {X,Y} = Loc,
-  Border_W = Width/2,
-  Border_H = Height/2,
-  if X < Border_W ->
-    if Y < Border_H -> distribute(T,Dimensions,S1, S2 ++ [Loc],S3,S4);
-      true-> distribute(T,Dimensions,S1, S2,S3 ++ [Loc],S4) end;
-    true->
-      if Y < Border_H -> distribute(T,Dimensions,S1 ++ [Loc], S2,S3,S4);
-        true-> distribute(T,Dimensions,S1, S2,S3 ,S4 ++ [Loc])  end
-  end.
+%----------------------------------------------GET-NEIGHBOUR------------------------------------------------------------
+% Gets the right neighbour of the slave by clockwise definition
+%-----------------------------------------------------------------------------------------------------------------------
 
 get_neighbour(CrashId,NE1,NE2,NE3,NE4) ->
-  case CrashId of
-    1  -> lists:nth(1,NE1);
-    2  -> lists:nth(1,NE2);
-    3  -> lists:nth(1,NE3);
-    4  -> lists:nth(1,NE4)
-  end.
+                case CrashId of
+                  1  -> lists:nth(1,NE1);
+                  2  -> lists:nth(1,NE2);
+                  3  -> lists:nth(1,NE3);
+                  4  -> lists:nth(1,NE4)
+                end.
+
+%---------------------------------------------CLEAN-SUB-LISTS-----------------------------------------------------------
+% Deletes the "dead" slave from all the lists we get. We do it by the id of the "dead" slave.
+%-----------------------------------------------------------------------------------------------------------------------
 
 clean_sub_lists(CrashId,NE1,NE2,NE3,NE4) ->
-  [lists:delete(CrashId,NE1),lists:delete(CrashId,NE2),lists:delete(CrashId,NE3),lists:delete(CrashId,NE4)].
+              [lists:delete(CrashId,NE1),lists:delete(CrashId,NE2),lists:delete(CrashId,NE3),lists:delete(CrashId,NE4)].
 
-arrange_tabels(CrashId,Neighbour,[L1,L2,L3,L4]) ->
-  case CrashId of
-    1 -> case Neighbour of
-           4 -> [[],L2,L3,L4 ++ L1];
-           3 -> [[],L2,L3 ++ L1,L4];
-           2 -> [[],L2 ++ L1, L3, L4]
-         end;
-    2 -> case Neighbour of
-           1 -> [L1 ++ L2,[],L3,L4];
-           3 -> [L1,[],L3 ++ L2, L4];
-           4 -> [L1,[],L3,L1 ++ L4]
-         end;
-    3 -> case Neighbour of
-           2 -> [L1,L2 ++ L3, [], L4];
-           1 -> [L1 ++ L3, L2, [], L4];
-           4 -> [L1, L2, [], L4 ++ L3]
-         end;
-    4 -> case Neighbour of
-           3 -> [L1, L2, L3 ++ L4,[]];
-           2 -> [L1, L2 ++ L4, L3, []];
-           1 -> [L1 ++ L4, L2, L3, []]
-         end
-  end.
+%----------------------------------------------ARRANGE-TABLES-----------------------------------------------------------
+% This function re-arrange the tables of each slave. We gets here when a slave is down and we need to transfer his data.
+%-----------------------------------------------------------------------------------------------------------------------
 
+arrange_tables(CrashId,Neighbour,[L1,L2,L3,L4]) ->
+              case CrashId of
+                1 -> case Neighbour of
+                       4 -> [[],L2,L3,L4 ++ L1];
+                       3 -> [[],L2,L3 ++ L1,L4];
+                       2 -> [[],L2 ++ L1, L3, L4]
+                     end;
+                2 -> case Neighbour of
+                       1 -> [L1 ++ L2,[],L3,L4];
+                       3 -> [L1,[],L3 ++ L2, L4];
+                       4 -> [L1,[],L3,L1 ++ L4]
+                     end;
+                3 -> case Neighbour of
+                       2 -> [L1,L2 ++ L3, [], L4];
+                       1 -> [L1 ++ L3, L2, [], L4];
+                       4 -> [L1, L2, [], L4 ++ L3]
+                     end;
+                4 -> case Neighbour of
+                       3 -> [L1, L2, L3 ++ L4,[]];
+                       2 -> [L1, L2 ++ L4, L3, []];
+                       1 -> [L1 ++ L4, L2, L3, []]
+                     end
+              end.
 
 %-----------------------------------------REQUESTER-LOOP----------------------------------------------------------------
 % Area of code for the Requester. This process handles the request for new data of birds from each slave alive that
@@ -255,28 +279,42 @@ arrange_tabels(CrashId,Neighbour,[L1,L2,L3,L4]) ->
 %-----------------------------------------------------------------------------------------------------------------------
 
 requester_loop(Members) ->
-  loop_by_time(Members),
-  timer:sleep(40),
-  requester_loop(Members).
+                loop_by_time(Members),
+                timer:sleep(40),
+                requester_loop(Members).
 
-loop_by_time([]) -> done;
+loop_by_time([]) ->
+                finish_to_send;
 loop_by_time([ Node | T ]) ->
-  gen_server:cast({flock_v4,element(2,Node)},{master_request}),
-  loop_by_time(T).
+                gen_server:cast({flock_v4,element(2,Node)},{master_request}),
+                loop_by_time(T).
 
 %------------------------------------------SEND-INITIAL-----------------------------------------------------------------
-
+% Function that sends the first initial data to each slave.
 %-----------------------------------------------------------------------------------------------------------------------
 
 send_initial([],_,_,_) ->
-  done;
-send_initial([ H | T ], Members, State, Offset) ->
-  send_post(members_to_list(Members,[]),H,element(1,maps:get(Offset,State))),
-  send_initial(T, Members,State,Offset+1).
+                finish_to_send;
+send_initial([H|T], Members, State, Offset) ->
+                gen_server:cast({flock_v4,element(1,maps:get(Offset,State))},{init,H,Members}),
+                send_initial(T, Members,State,Offset+1).
 
+%-------------------------------------------SEND-WHILE------------------------------------------------------------------
+% Function that sends new locations to add to each slave who connect to comm_v2 server.
+%-----------------------------------------------------------------------------------------------------------------------
 
+send_while([],_,_,_,_) ->
+                finish_to_send;
+send_while([H|T],L1,L2,L3,L4) ->
+                case element(1,H) of
+                  1 -> gen_server:cast({flock_v4,element(2,H)},{insert,L1}),send_while(T,L1,L2,L3,L4);
+                  2 -> gen_server:cast({flock_v4,element(2,H)},{insert,L2}),send_while(T,L1,L2,L3,L4);
+                  3 -> gen_server:cast({flock_v4,element(2,H)},{insert,L3}),send_while(T,L1,L2,L3,L4);
+                  4 -> gen_server:cast({flock_v4,element(2,H)},{insert,L4}),send_while(T,L1,L2,L3,L4)
+                end.
 
-%------------------------------------------RE-ARANGE-----------------------------------------------------------------
+%------------------------------------------RE-ARANGE--------------------------------------------------------------------
+%
 % NE(i) is lists of alive neighbours(clockwise) of node i
 %-----------------------------------------------------------------------------------------------------------------------
 
@@ -294,33 +332,13 @@ re_arange(State = #{alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 
   gen_server:cast({flock_v4,element(1,NodeToSend)},{insert,lists:nth(H,MapLocations)++lists:nth(IdToSend,MapLocations)}),
   re_arange(State,MapLocations,T).
 
-
-%-------------------------------------------SEND-WHILE------------------------------------------------------------------
-
-%-----------------------------------------------------------------------------------------------------------------------
-
-send_while([],_,_,_,_) ->
-  done;
-send_while([H|T],L1,L2,L3,L4) ->
-  case element(1,H) of
-    1 -> gen_server:cast({flock_v4,element(2,H)},{insert,L1}),send_while(T,L1,L2,L3,L4);
-    2 -> gen_server:cast({flock_v4,element(2,H)},{insert,L2}),send_while(T,L1,L2,L3,L4);
-    3 -> gen_server:cast({flock_v4,element(2,H)},{insert,L3}),send_while(T,L1,L2,L3,L4);
-    4 -> gen_server:cast({flock_v4,element(2,H)},{insert,L4}),send_while(T,L1,L2,L3,L4)
-  end.
-
-%--------------------------------------------SEND-POST------------------------------------------------------------------
-
-%-----------------------------------------------------------------------------------------------------------------------
-
-send_post(Members,List,Member) ->
-  gen_server:cast({flock_v4,Member},{init,List,Members}).
-
 %------------------------------------------MEMBERS-TO-LIST--------------------------------------------------------------
-
+% Function that gets the map list_mem and returns list of the members alive right now.
 %-----------------------------------------------------------------------------------------------------------------------
-members_to_list([],Acc) -> Acc;
+
+members_to_list([],Acc) ->
+                  Acc;
 members_to_list([H|T],Acc) ->
-  members_to_list(T, [element(2,H)] ++ Acc).
+                  members_to_list(T, [element(2,H)] ++ Acc).
 
 
