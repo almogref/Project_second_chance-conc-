@@ -95,12 +95,12 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1},
                             4 := {N_4,lists:nth(4,MapLocations)}}};
 
     {update,NumToAdd}  ->
-                         [NL1,NL2,NL3,NL4] = MapLocations = handleMore(NumToAdd),  % sends to handle more function with the update registers value
+                         [NL1,NL2,NL3,NL4]  = handleMore(NumToAdd),  % sends to handle more function with the update registers value
                          if
                          Num =:= 4 ->  sendWhile(Members,NL1,NL2,NL3,NL4),
                                        {noreply,State};
                          % we need to check who is dead
-                         true ->       reArange(State,MapLocations,ListOfDeads),
+                         true ->       reArange(State,[NL1,NL2,NL3,NL4],ListOfDeads),
                                        {noreply,State}
                         end;
 
