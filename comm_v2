@@ -86,18 +86,21 @@ handle_call(Request,_,State = #{registers := OldNum, list_mem := Members}) ->
 
 %-----------------------------------------------------------------------------------------------------------------------
 % Handle cast to comm_v2 server. We get the following asynchronous messages:
+%
 % 1. {package,Data,Id} - incoming list of data that contains new data on the birds from the sender slave,The data can an
-%    empty list so we cover that possibility in the message passing.
-%    When we gets a new package of data, we upgrade the state of the comm_v2 server with it and sending it to graphic
-%    that takes charge from there. Empty packages will be ignored.
-% 2. state - ask for that current state of the server. We did it for debugging purposes.
+%                        empty list so we cover that possibility in the message passing. When we gets a new package
+%                        of data, we upgrade the state of the comm_v2 server with it and sending it to graphic that
+%                        takes charge from there. Empty packages will be ignored.
+%
+% 2. state -             ask for that current state of the server. We did it for debugging purposes.
 %-----------------------------------------------------------------------------------------------------------------------
 
 handle_cast(_Msg,State = #{numPackets := Num, registers := NumReg}) ->
   case _Msg of
+    %----------{package,[],Id}------------%
     {package,[],Id} ->
                 {noreply,State};
-    %-----------------------------%
+    %-------- -{package,Package,Id}-------%
     {package,Package,Id} ->
                 gen_server:cast(graphic,{data,Package}),
                 {Node,Table} = maps:get(Id,State),
@@ -108,32 +111,36 @@ handle_cast(_Msg,State = #{numPackets := Num, registers := NumReg}) ->
                   true ->
                     {noreply,State#{numPackets := Num+1, Id := {Node,ets:insert(Table,{Id,Package})}}}
                 end;
-    %-----------------------------%
+    %----------------state----------------%
     state ->
-                io:format("The state is: ~p ~n ",[State]),{noreply,State};
-    %-----------------------------%
+                io:format("The state is:~n~p ",[State]),{noreply,State};
+    %--------------DONT-CARE--------------%
     _ElseWhere ->
                 {noreply,State}
   end.
 
 %-----------------------------------------------------------------------------------------------------------------------
 % Handle info to comm_v2 server. We get the following messages:
-% 1.
+%
+% 1. {go,FirstData} - message that received from the graphic server only when the user request to start and send initial
+%                     values(Number of birds to start with). We generate randomly locations and send to each slave the
+%                     list of locations in his sector which he needs to manage.
+%
 %-----------------------------------------------------------------------------------------------------------------------
 
-handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1}, 2 := {N_2,L2},3 := {N_3,L3}, 4 := {N_4,L4},
-  alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4, list_of_deads := ListOfDeads}) ->
+handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 := {N_2,T2},3 := {N_3,T3},4 := {N_4,T4},
+            alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4, list_of_deads := ListOfDeads}) ->
   case Msg of
-    % creates the process who's gonna handle the asks for more data from other nodes
+
     {go,FirstData} ->
-      ListOfLocations = gen_Locations({1300,700},FirstData),
-      MapLocations = distribute(ListOfLocations,{1300,700},[],[],[],[]),
-      sendInitial(MapLocations,Members,State,1),
-      % Loopi = spawn(fun() -> askForNewData(Members) end),
-      Loopi = spawn(fun() -> askForNewData(Members,5) end),
-      {noreply,State#{loopi := Loopi, 1 := {N_1,lists:nth(1,MapLocations)},
-        2 := {N_2,lists:nth(2,MapLocations)}, 3 := {N_3,lists:nth(3,MapLocations)},
-        4 := {N_4,lists:nth(4,MapLocations)}}};
+                ListOfLocations = gen_Locations({1300,700},FirstData),
+                MapLocations = distribute(ListOfLocations,{1300,700},[],[],[],[]),
+                sendInitial(MapLocations,Members,State,1),
+                % Loopi = spawn(fun() -> askForNewData(Members) end),
+                Loopi = spawn(fun() -> askForNewData(Members,5) end),
+                {noreply,State#{loopi := Loopi, 1 := {N_1,lists:nth(1,MapLocations)},
+                  2 := {N_2,lists:nth(2,MapLocations)}, 3 := {N_3,lists:nth(3,MapLocations)},
+                  4 := {N_4,lists:nth(4,MapLocations)}}};
 
     {update,NumToAdd}  ->
       [NL1,NL2,NL3,NL4] = MapLocations = handleMore(NumToAdd),  % sends to handle more function with the update registers value
