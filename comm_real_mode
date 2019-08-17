@@ -5,7 +5,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--export([handleMore/1,splitUtilities/1]).
+-export([handleMore/1]).
 
 % --- gen_server functions -----
 % ------------------------------
@@ -136,11 +136,6 @@ handle_info(Msg, State = #{registers := Num, list_mem := Members, 1 := {N_1,L1},
 % handle_call - FUNCTIONS
 % -------------------------------------------------------------------------
 
-splitUtilities(Data) ->
-  ListOfLocations = gen_Locations({1300,700},Data),
-  distribute({1300,700},ListOfLocations,[],[],[],[]).
-
-
 gen_Locations(_,0)->[];
 gen_Locations(Dimensions,N)->
   [gen_Location(Dimensions) | gen_Locations(Dimensions,N-1) ].
@@ -234,7 +229,7 @@ sendWhile([H|T],L1,L2,L3,L4) ->
   end.
 
 
-% We didnt take care if two is down
+
 getNeighbour(CrashId,NE1,NE2,NE3,NE4) ->
       case CrashId of
                    1  -> lists:nth(1,NE1);
@@ -244,7 +239,6 @@ getNeighbour(CrashId,NE1,NE2,NE3,NE4) ->
       end.
 
 
-% to check if its allowed not to check if id is in the list first.
 cleanSubLists(CrashId,NE1,NE2,NE3,NE4) ->
   [lists:delete(CrashId,NE1),lists:delete(CrashId,NE2),lists:delete(CrashId,NE3),lists:delete(CrashId,NE4)].
 
@@ -259,7 +253,7 @@ cleanSubLists(CrashId,NE1,NE2,NE3,NE4) ->
 %%  timer:sleep(40),
 %%  askForNewData(Members).
 
-askForNewData(Members,0) -> done;
+askForNewData(_,0) -> done;
 askForNewData(Members,Counter) ->
   loopByTime(Members),
   timer:sleep(200),
