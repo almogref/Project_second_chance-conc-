@@ -129,7 +129,12 @@ handle_cast(_Msg,State = #{numPackets := Num, registers := NumReg}) ->
 %                        We generate new locations randomly and sends them to the slaves that alive. When there is a
 %                        slave which is status is "dead" we send his extra new locations to his neighbour(neighbour
 %                        definition is clockwise e.g. node area 1 is the neighbour of node area 2)
-% 3.
+% 3. {nodedown,Node} - message the received when a slave is down. If all slaves(we have total of 4) are down, we close
+%                      the comm_v2 server and graphic, otherwise we initial the procedure of Handle-Crashes.
+%                      Handle-Crashes procedure: We transfer all the last income data from the slave who fall to his
+%                      neighbour. We delete from the field "list_mem" the slave who fall and delete his ets table from
+%                      in the comm_v2 server. As well, we updating the number of nodes alive in the field registers,
+%                      and send cast message to the graphic server with the this number.
 %-----------------------------------------------------------------------------------------------------------------------
 
 handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 := {N_2,T2},3 := {N_3,T3},4 := {N_4,T4},
@@ -154,24 +159,24 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 :
                 end;
     %------------{nodedown,Node}------------%
     {nodedown,Node} ->
-      if
-        Num =:= 1 ->  gen_server:cast(graphic,stop),close([]); % all nodes crashed. we close the program
-        true ->
-          CrashId = maps:get(Node,State),
-          ListOfCrashed = element(2,maps:get(CrashId,State)),
-          NewMembers = lists:delete({CrashId,Node},Members),
-          Neighbour = getNeighbour(CrashId,NE1,NE2,NE3,NE4),
-          [LI1,LI2,LI3,LI4] = cleanSubLists(CrashId,NE1,NE2,NE3,NE4),
-          [Birds1,Birds2,Birds3,Birds4] = arrangeBirds(CrashId,Neighbour,[L1,L2,L3,L4]),
-          handleCrashes(ListOfCrashed,element(1,maps:get(Neighbour,State)),CrashId),
-          gen_server:cast(graphic,{down,Num-1}),
-          % update the status with the right nodes alive
-          {noreply,State#{registers := Num - 1, CrashId := {dead,[]}, Node := dead,
-            list_mem := NewMembers, list_of_deads := [CrashId] ++ ListOfDeads,
-            alives_1 := LI1, alives_2 := LI2, alives_3 := LI3, alives_4 := LI4,
-            1 := {N_1,Birds1}, 2 := {N_2,Birds2}, 3 := {N_3,Birds3},
-            4 := {N_4,Birds4}}}
-      end;
+                if
+                  Num =:= 1 ->
+                    gen_server:cast(graphic,stop),
+                    gen_server:stop(comm);
+                  true ->
+                    CrashId = maps:get(Node,State),
+                    ListOfCrashed = ets:tab2list(element(2,maps:get(CrashId,State))),
+                    NewMembers = lists:delete({CrashId,Node},Members),
+                    ets:delete_all_objects(element(2,maps:get(CrashId,State))),
+                    Neighbour = get_neighbour(CrashId,NE1,NE2,NE3,NE4),
+                    [LI1,LI2,LI3,LI4] = clean_sub_lists(CrashId,NE1,NE2,NE3,NE4),
+                    [Birds1,Birds2,Birds3,Birds4] = arrange_tabels(CrashId,Neighbour,[T1,T2,T3,T4]),
+                    gen_server:cast({flock_v4,element(1,maps:get(Neighbour,State))},{flock_down,ListOfCrashed,CrashId}),
+                    gen_server:cast(graphic,{down,Num-1}),
+                    {noreply,State#{registers := Num-1, CrashId := {dead,[]}, Node := dead, list_mem := NewMembers,
+                      list_of_deads := [CrashId] ++ ListOfDeads, alives_1 := LI1, alives_2 := LI2, alives_3 := LI3,
+                      alives_4 := LI4, 1 := {N_1,Birds1}, 2 := {N_2,Birds2}, 3 := {N_3,Birds3}, 4 := {N_4,Birds4}}}
+                end;
     %----------------stop-----------------%
     stop ->
                   close(Members),{noreply,State};
@@ -205,6 +210,41 @@ distribute([Loc|T], Dimensions,S1,S2,S3,S4)->
     true->
       if Y < Border_H -> distribute(T,Dimensions,S1 ++ [Loc], S2,S3,S4);
         true-> distribute(T,Dimensions,S1, S2,S3 ,S4 ++ [Loc])  end
+  end.
+
+get_neighbour(CrashId,NE1,NE2,NE3,NE4) ->
+  case CrashId of
+    1  -> lists:nth(1,NE1);
+    2  -> lists:nth(1,NE2);
+    3  -> lists:nth(1,NE3);
+    4  -> lists:nth(1,NE4)
+  end.
+
+clean_sub_lists(CrashId,NE1,NE2,NE3,NE4) ->
+  [lists:delete(CrashId,NE1),lists:delete(CrashId,NE2),lists:delete(CrashId,NE3),lists:delete(CrashId,NE4)].
+
+arrange_tabels(CrashId,Neighbour,[L1,L2,L3,L4]) ->
+  case CrashId of
+    1 -> case Neighbour of
+           4 -> [[],L2,L3,L4 ++ L1];
+           3 -> [[],L2,L3 ++ L1,L4];
+           2 -> [[],L2 ++ L1, L3, L4]
+         end;
+    2 -> case Neighbour of
+           1 -> [L1 ++ L2,[],L3,L4];
+           3 -> [L1,[],L3 ++ L2, L4];
+           4 -> [L1,[],L3,L1 ++ L4]
+         end;
+    3 -> case Neighbour of
+           2 -> [L1,L2 ++ L3, [], L4];
+           1 -> [L1 ++ L3, L2, [], L4];
+           4 -> [L1, L2, [], L4 ++ L3]
+         end;
+    4 -> case Neighbour of
+           3 -> [L1, L2, L3 ++ L4,[]];
+           2 -> [L1, L2 ++ L4, L3, []];
+           1 -> [L1 ++ L4, L2, L3, []]
+         end
   end.
 
 
@@ -282,3 +322,5 @@ send_post(Members,List,Member) ->
 members_to_list([],Acc) -> Acc;
 members_to_list([H|T],Acc) ->
   members_to_list(T, [element(2,H)] ++ Acc).
+
+
