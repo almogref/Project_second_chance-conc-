@@ -18,33 +18,34 @@
 -export([handleMore/1,splitUtilities/1]).
 
 
-%-----------------------------------------------------------------------------------------------------------------------
+%-----------------------------------------------START-LINK--------------------------------------------------------------
 % Start link. Register comm_v2 locally and uploading the server.
 %-----------------------------------------------------------------------------------------------------------------------
 
 start_link() -> gen_server:start_link({local, comm_v2}, comm_v2, [], []).
 
-%-----------------------------------------------------------------------------------------------------------------------
+%------------------------------------------------INIT-------------------------------------------------------------------
 % Initial comm_v2 with default fields.
 %-----------------------------------------------------------------------------------------------------------------------
 
 init([]) ->
-  {ok, #{numPackets => 0, registers => 0, 1 => {dead,[]}, 2 => {dead,[]}, 3 =>  {dead,[]}, 4 =>  {dead,[]}, list_mem => [], loopi => dead,
-    list_of_deads => [], alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4], alives_2 => [1,4,3]}}.
+  {ok, #{numPackets => 0, registers => 0, 1 => {dead,[]}, 2 => {dead,[]}, 3 =>  {dead,[]}, 4 =>  {dead,[]},
+  list_mem => [], requester => dead, list_of_deads => [], alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4],
+  alives_2 => [1,4,3]}}.
 
-%-----------------------------------------------------------------------------------------------------------------------
+%----------------------------------------------TERMINATE----------------------------------------------------------------
 % Terminate function for callback functions that fails or returns a bad value.
 %-----------------------------------------------------------------------------------------------------------------------
 
 terminate(Reason, _State) -> io:format("Callback function fails. Error message:~n~p ",[Reason]).
 
-%-----------------------------------------------------------------------------------------------------------------------
+%----------------------------------------------CHANGE-CODE--------------------------------------------------------------
 % Change code function.
 %-----------------------------------------------------------------------------------------------------------------------
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-%-----------------------------------------------------------------------------------------------------------------------
+%------------------------------------------------CLOSE------------------------------------------------------------------
 % Sends close messages to all alive nodes
 %-----------------------------------------------------------------------------------------------------------------------
 
@@ -52,8 +53,8 @@ close(Members) ->
   lists:foreach(fun({_,Node}) -> gen_server:cast({flock_v4,Node},stop) end ,Members),
   gen_server:stop(comm).
 
-%-----------------------------------------------------------------------------------------------------------------------
-% Handle calls to comm_v2 server. The only type of call message we support is in the type of registration by the tuple
+%---------------------------------------------HANDLE-CALL---------------------------------------------------------------
+% The only type of call message we support is in the type of registration by the tuple
 % {register,Name}. After 4 slaves registrations we initializing and starting the graphic server.
 % More specific handle way:
 % gets {register,Node} from the client. sends back {ok,id_number}
@@ -61,7 +62,6 @@ close(Members) ->
 % lists of members get upgrade as well, [ {id_number,ip_node} , ... ]
 % registers + 1
 %-----------------------------------------------------------------------------------------------------------------------
-
 handle_call(Request,_,State = #{registers := OldNum, list_mem := Members}) ->
   case Request of
     {register,Name} ->
@@ -84,8 +84,8 @@ handle_call(Request,_,State = #{registers := OldNum, list_mem := Members}) ->
 
   end.
 
-%-----------------------------------------------------------------------------------------------------------------------
-% Handle cast to comm_v2 server. We get the following asynchronous messages:
+%---------------------------------------------HANDLE-CAST---------------------------------------------------------------
+% We get the following asynchronous messages:
 %
 % 1. {package,Data,Id} - incoming list of data that contains new data on the birds from the sender slave,The data can an
 %                        empty list so we cover that possibility in the message passing. When we gets a new package
@@ -119,45 +119,41 @@ handle_cast(_Msg,State = #{numPackets := Num, registers := NumReg}) ->
                 {noreply,State}
   end.
 
-%-----------------------------------------------------------------------------------------------------------------------
-% Handle info to comm_v2 server. We get the following messages:
+%-----------------------------------------------HANDLE-INFO-------------------------------------------------------------
+% We get the following messages:
 %
 % 1. {go,FirstData} - message that received from the graphic server only when the user request to start and send initial
 %                     values(Number of birds to start with). We generate randomly locations and send to each slave the
 %                     list of locations in his sector which he needs to manage.
-%
+% 2. {update,NumToAdd} - message that received from the graphic server when the user wants to add more birds.
+%                        We generate new locations randomly and sends them to the slaves that alive. When there is a
+%                        slave which is status is "dead" we send his extra new locations to his neighbour(neighbour
+%                        definition is clockwise e.g. node area 1 is the neighbour of node area 2)
+% 3.
 %-----------------------------------------------------------------------------------------------------------------------
 
 handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 := {N_2,T2},3 := {N_3,T3},4 := {N_4,T4},
             alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4, list_of_deads := ListOfDeads}) ->
   case Msg of
-
+    %----------{go,FirstData}------------%
     {go,FirstData} ->
-                ListOfLocations = gen_Locations({1300,700},FirstData),
-                MapLocations = distribute(ListOfLocations,{1300,700},[],[],[],[]),
-                sendInitial(MapLocations,Members,State,1),
-                % Loopi = spawn(fun() -> askForNewData(Members) end),
-                Loopi = spawn(fun() -> askForNewData(Members,5) end),
-                {noreply,State#{loopi := Loopi, 1 := {N_1,lists:nth(1,MapLocations)},
-                  2 := {N_2,lists:nth(2,MapLocations)}, 3 := {N_3,lists:nth(3,MapLocations)},
-                  4 := {N_4,lists:nth(4,MapLocations)}}};
-
+                MapLocations = distribute(gen_locations({1300,700},FirstData),{1300,700},[],[],[],[]),
+                send_initial(MapLocations,Members,State,1),
+                Requester = spawn(fun() -> requester_loop(Members) end),
+                {noreply,State#{requester := Requester}};
+    %----------{update,NumToAdd}------------%
     {update,NumToAdd}  ->
-      [NL1,NL2,NL3,NL4] = MapLocations = handleMore(NumToAdd),  % sends to handle more function with the update registers value
-      if
-        Num =:= 4 ->  sendWhile(Members,NL1,NL2,NL3,NL4),
-          {noreply,State#{1 := {N_1,L1 ++ NL1},
-            2 := {N_2,L2 ++ NL2}, 3 := {N_3,L3 ++ NL3},
-            4 := {N_4,L4 ++ NL4}}};
-      % we need to check who is dead
-        true -> {noreply,reArange(State,MapLocations,ListOfDeads)}
-      end;
-
-    % The user ask to close the program
-    stop ->            close(Members),{noreply,State};
-
-    % node is down :(
-    {nodedown, Node} ->
+                [NL1,NL2,NL3,NL4] = distribute(gen_locations({1300,700},NumToAdd),{1300,700},[],[],[],[]),
+                if
+                  Num =:= 4 ->
+                    send_while(Members,NL1,NL2,NL3,NL4),
+                    {noreply,State};
+                  true ->
+                    re_arange(State,[NL1,NL2,NL3,NL4],ListOfDeads),
+                    {noreply,State}
+                end;
+    %------------{nodedown,Node}------------%
+    {nodedown,Node} ->
       if
         Num =:= 1 ->  gen_server:cast(graphic,stop),close([]); % all nodes crashed. we close the program
         true ->
@@ -176,14 +172,113 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 :
             1 := {N_1,Birds1}, 2 := {N_2,Birds2}, 3 := {N_3,Birds3},
             4 := {N_4,Birds4}}}
       end;
-    % dont care
-    _    ->             {noreply,State}
+    %----------------stop-----------------%
+    stop ->
+                  close(Members),{noreply,State};
+    %--------------DONT-CARE--------------%
+    _ElseWhere ->
+                  {noreply,State}
   end.
 
 %-----------------------------------------------------------------------------------------------------------------------
-% ------------------------------------------- MAINTENANCE FUNCTIONS ----------------------------------------------------
+% ------------------------------------------- MAINTENANCE-FUNCTIONS ----------------------------------------------------
 %-----------------------------------------------------------------------------------------------------------------------
 
+gen_locations(_,0)->[];
+gen_locations(Dimensions,N)->
+  [gen_location(Dimensions) | gen_locations(Dimensions,N-1)].
+
+
+gen_location({Width,Height}) -> {rand:uniform(Width),rand:uniform(Height)}.
+
+
+distribute([],_,S1,S2,S3,S4)-> [S1,S2,S3,S4];
+
+distribute([Loc|T], Dimensions,S1,S2,S3,S4)->
+  {Width,Height} = Dimensions,
+  {X,Y} = Loc,
+  Border_W = Width/2,
+  Border_H = Height/2,
+  if X < Border_W ->
+    if Y < Border_H -> distribute(T,Dimensions,S1, S2 ++ [Loc],S3,S4);
+      true-> distribute(T,Dimensions,S1, S2,S3 ++ [Loc],S4) end;
+    true->
+      if Y < Border_H -> distribute(T,Dimensions,S1 ++ [Loc], S2,S3,S4);
+        true-> distribute(T,Dimensions,S1, S2,S3 ,S4 ++ [Loc])  end
+  end.
+
+
+%-----------------------------------------REQUESTER-LOOP----------------------------------------------------------------
+% Area of code for the Requester. This process handles the request for new data of birds from each slave alive that
+% connect to comm_v2 server. He asks for package by sending the message {master_request} to the slave.
+% This method happening every 40ms.
+%-----------------------------------------------------------------------------------------------------------------------
+
+requester_loop(Members) ->
+  loop_by_time(Members),
+  timer:sleep(40),
+  requester_loop(Members).
+
+loop_by_time([]) -> done;
+loop_by_time([ Node | T ]) ->
+  gen_server:cast({flock_v4,element(2,Node)},{master_request}),
+  loop_by_time(T).
+
+%------------------------------------------SEND-INITIAL-----------------------------------------------------------------
+
+%-----------------------------------------------------------------------------------------------------------------------
+
+send_initial([],_,_,_) ->
+  done;
+send_initial([ H | T ], Members, State, Offset) ->
+  send_post(members_to_list(Members,[]),H,element(1,maps:get(Offset,State))),
+  send_initial(T, Members,State,Offset+1).
 
 
 
+%------------------------------------------RE-ARANGE-----------------------------------------------------------------
+% NE(i) is lists of alive neighbours(clockwise) of node i
+%-----------------------------------------------------------------------------------------------------------------------
+
+re_arange(State ,_,[]) ->
+  State;
+re_arange(State = #{alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4}, MapLocations, [H|T]) ->
+  IdToSend =                        case H of
+                                      % GETS THE BIRDS LIST OF THE NEIGHBOUR
+                                      1  -> lists:nth(1,NE1);
+                                      2  -> lists:nth(1,NE2);
+                                      3  -> lists:nth(1,NE3);
+                                      4  -> lists:nth(1,NE4)
+                                    end,
+  NodeToSend = maps:get(IdToSend,State),
+  gen_server:cast({flock_v4,element(1,NodeToSend)},{insert,lists:nth(H,MapLocations)++lists:nth(IdToSend,MapLocations)}),
+  re_arange(State,MapLocations,T).
+
+
+%-------------------------------------------SEND-WHILE------------------------------------------------------------------
+
+%-----------------------------------------------------------------------------------------------------------------------
+
+send_while([],_,_,_,_) ->
+  done;
+send_while([H|T],L1,L2,L3,L4) ->
+  case element(1,H) of
+    1 -> gen_server:cast({flock_v4,element(2,H)},{insert,L1}),send_while(T,L1,L2,L3,L4);
+    2 -> gen_server:cast({flock_v4,element(2,H)},{insert,L2}),send_while(T,L1,L2,L3,L4);
+    3 -> gen_server:cast({flock_v4,element(2,H)},{insert,L3}),send_while(T,L1,L2,L3,L4);
+    4 -> gen_server:cast({flock_v4,element(2,H)},{insert,L4}),send_while(T,L1,L2,L3,L4)
+  end.
+
+%--------------------------------------------SEND-POST------------------------------------------------------------------
+
+%-----------------------------------------------------------------------------------------------------------------------
+
+send_post(Members,List,Member) ->
+  gen_server:cast({flock_v4,Member},{init,List,Members}).
+
+%------------------------------------------MEMBERS-TO-LIST--------------------------------------------------------------
+
+%-----------------------------------------------------------------------------------------------------------------------
+members_to_list([],Acc) -> Acc;
+members_to_list([H|T],Acc) ->
+  members_to_list(T, [element(2,H)] ++ Acc).
