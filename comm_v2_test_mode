@@ -30,7 +30,7 @@ init([]) ->
   initial_tables(),
   RequesterPid = spawn(fun() -> requester_idle() end),
   register(requester,RequesterPid),
-  {ok, #{numPackets => 0, registers => 0, 1 => dead, 2 => dead, 3 => dead, 4 => dead, list_mem => [],
+  {ok, #{numPackets => 0, registers => 0, 1 => dead, 2 => dead, 3 => dead, 4 => dead, list_mem => [], we_ok => true,
     list_of_deads => [], alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4], alives_2 => [1,4,3]}}.
 
 %----------------------------------------------TERMINATE----------------------------------------------------------------
@@ -101,12 +101,12 @@ handle_call(Request,_,State = #{registers := CurrentRegisters, list_mem := Membe
 % 2. state:              ask for that current state of the server. We did it for debugging purposes.
 %-----------------------------------------------------------------------------------------------------------------------
 
-handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Members}) ->
+handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Members, we_ok := Ok}) ->
   case Msg of
     %-------- -{package,Package,Id}-------%
     {package,Package,Id} ->
       if
-        Num =:= (NumReg - 1) ->
+        (Num =:= NumReg - 1) and (Ok =:= true) ->
           io:format("SERVER: numPackets is 4, and the package delivery is from id: ~p~nPackage Info: ~p~nNumer of packets is: ~p~n",[Id,Package,Num]),
           ListToSend = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], table_acc),
           io:format("SERVER: numPackets is 4, the list we sent to graphic is: ~p~n",[Package ++ ListToSend]),
@@ -138,6 +138,12 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Mem
           io:format("SERVER: numPackets is NOT 4, list of birds of in table_acc is: ~p~n",[TEST5]),
           {noreply,State#{numPackets := Num + 1}}
       end;
+    %----------------ready----------------%
+    ready ->
+      RequesterPid = spawn(fun() -> requester_idle() end),
+      register(requester,RequesterPid),
+      requester!{go,Members},
+      {noreply,State#{we_ok := true}};
     %----------------state----------------%
     state ->
       io:format("The state is:~n~p ",[State]),
@@ -209,6 +215,7 @@ handle_info(Msg,State = #{registers := Num, list_mem := Members , alives_1 := NE
       end;
     %------------{nodedown,Node}------------%
     {nodedown,Node} ->
+      exit(requester,kill),
       if
         Num =:= 1 ->
           gen_server:cast(graphic_v3,stop),
@@ -229,7 +236,7 @@ handle_info(Msg,State = #{registers := Num, list_mem := Members , alives_1 := NE
           gen_server:cast({flock_v4,maps:get(Neighbour,State)},{flock_down,ListOfCrashed,CrashId}),
           {noreply,State#{registers := Num-1, CrashId := dead, Node := dead, list_mem := NewMembers,
             list_of_deads := [CrashId] ++ ListOfDeads, alives_1 := LI1, alives_2 := LI2, alives_3 := LI3,
-            alives_4 := LI4}}
+            alives_4 := LI4, we_ok := false}}
       end;
     %----------------stop-----------------%
     stop ->
@@ -342,7 +349,7 @@ clean_sub_lists(CrashId,NE1,NE2,NE3,NE4) ->
 requester_idle() ->
   receive
     {go,Members}  -> io:format("REQUESTER: got an initial values. The members is: ~p~n",[Members]),requester_loop(Members);
-    Msg            -> io:format("REQUESTER: got an message from the server. The message is: ~p~n",[Msg]),requester_idle()
+    Msg           -> io:format("REQUESTER: got an message from the server. The message is: ~p~n",[Msg]),requester_idle()
   end.
 
 requester_loop(Members) ->
