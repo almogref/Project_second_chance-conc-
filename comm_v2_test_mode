@@ -30,8 +30,8 @@ init([]) ->
   initial_tables(),
   RequesterPid = spawn(fun() -> requester_idle() end),
   register(requester,RequesterPid),
-  {ok, #{numPackets => 0, registers => 0, 1 => dead, 2 => dead, 3 => dead, 4 => dead, list_mem => empty,
-    list_of_deads => empty, alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4], alives_2 => [1,4,3]}}.
+  {ok, #{numPackets => 0, registers => 0, 1 => dead, 2 => dead, 3 => dead, 4 => dead, list_mem => [],
+    list_of_deads => [], alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4], alives_2 => [1,4,3]}}.
 
 %----------------------------------------------TERMINATE----------------------------------------------------------------
 % Terminate function for callback functions that fails or returns a bad value.
@@ -107,9 +107,9 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Mem
     {package,Package,Id} ->
       if
         Num =:= (NumReg - 1) ->
-          io:format("SERVER: numPackets is 4, and the package delivery is from id: ~p~nPackage Info: ~p~n",[Id,Package]),
+          io:format("SERVER: numPackets is 4, and the package delivery is from id: ~p~nPackage Info: ~p~nNumer of packets is: ~p~n",[Id,Package,Num]),
           ListToSend = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], table_acc),
-          io:format("SERVER: numPackets is 4, the list we sent to graphic is: ~p~n",[ListToSend]),
+          io:format("SERVER: numPackets is 4, the list we sent to graphic is: ~p~n",[Package ++ ListToSend]),
           gen_server:cast(graphic,{data,Package ++ ListToSend}),
           gen_server:cast(graphic,paint),
           requester!{send,Members},
@@ -126,8 +126,7 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Mem
           io:format("SERVER: numPackets is 4, list of birds of in table_acc is: ~p~n",[TEST5]),
           {noreply,State#{numPackets := 0}};
         true ->
-          io:format("SERVER: numPackets is: ~p~n",[Num]),
-          io:format("SERVER: numPackets is NOT 4, and the package delivery is from id: ~p~nPackage Info: ~p~n",[Id,Package]),
+          io:format("SERVER: numPackets is NOT 4, and the package delivery is from id: ~p~nPackage Info: ~p~nNumer of packets is: ~p~n",[Id,Package,Num]),
           update_tables(Id,Package),
           [TEST1,TEST2,TEST3,TEST4] = test_tables_to_lists(),
           io:format("SERVER: numPackets is NOT 4, updated tables information by lists:~n",[]),
@@ -144,6 +143,15 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Mem
     state ->
       io:format("The state is:~n~p ",[State]),
       {noreply,State};
+    %----------------tables----------------%
+    tables ->
+      [TEST1,TEST2,TEST3,TEST4] = test_tables_to_lists(),
+      io:format("SERVER: list of birds of id 1: ~p~n",[TEST1]),
+      io:format("SERVER: list of birds of id 2: ~p~n",[TEST2]),
+      io:format("SERVER: list of birds of id 3: ~p~n",[TEST3]),
+      io:format("SERVER: list of birds of id 4: ~p~n",[TEST4]),
+      TEST5 = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], table_acc),
+      io:format("SERVER: list of birds of in table_acc is: ~p~n",[TEST5]);
     %--------------DONT-CARE--------------%
     _ElseWhere ->
       {noreply,State}
@@ -172,7 +180,7 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Mem
 %                      and send cast message to the graphic server with the this number.
 %-----------------------------------------------------------------------------------------------------------------------
 
-handle_info(Msg,State = #{registers := Num,list_mem := Members ,alives_1 := NE1, alives_2 := NE2, alives_3 := NE3,
+handle_info(Msg,State = #{registers := Num, list_mem := Members , alives_1 := NE1, alives_2 := NE2, alives_3 := NE3,
   alives_4 := NE4, list_of_deads := ListOfDeads}) ->
   case Msg of
     %----------{go,FirstData}------------%
@@ -266,11 +274,11 @@ update_tables(Id,Package) ->
 %-----------------------------------------------------------------------------------------------------------------------
 
 initial_tables() ->
-  ets:new(table_acc,[set]),
-  ets:new(slave_1,[set]),
-  ets:new(slave_2,[set]),
-  ets:new(slave_3,[set]),
-  ets:new(slave_4,[set]).
+  ets:new(table_acc,[set,named_table]),
+  ets:new(slave_1,[set,named_table]),
+  ets:new(slave_2,[set,named_table]),
+  ets:new(slave_3,[set,named_table]),
+  ets:new(slave_4,[set,named_table]).
 
 %----------------------------------------------GEN-LOCATIONS------------------------------------------------------------
 % Function that uses gen_location function to generate randomly new locations on the screen.
@@ -333,8 +341,8 @@ clean_sub_lists(CrashId,NE1,NE2,NE3,NE4) ->
 
 requester_idle() ->
   receive
-    {go,Members} -> io:format("REQUESTER: got an initial values. The members is: ~p~n",[Members]);
-    Msg            -> io:format("REQUESTER: got an message from the server. The message is: ~p~n",[Msg])
+    {go,Members} -> io:format("REQUESTER: got an initial values. The members is: ~p~n",[Members]),requester_idle();
+    Msg            -> io:format("REQUESTER: got an message from the server. The message is: ~p~n",[Msg]),requester_idle()
   end.
 
 requester_loop(Members) ->
