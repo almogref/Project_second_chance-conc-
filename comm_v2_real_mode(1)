@@ -53,7 +53,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 close(Members) ->
   lists:foreach(fun({_,Node}) -> gen_server:cast({flock_v4,Node},stop) end ,Members),
-  gen_server:stop(comm).
+  gen_server:stop(comm_v2_test).
 
 %---------------------------------------------HANDLE-CALL---------------------------------------------------------------
 % The only type of call message we support is in the type of registration by the tuple
@@ -172,7 +172,7 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members ,alives_1 := NE1,
                 if
                   Num =:= 1 ->
                     gen_server:cast(graphic_v2,stop),
-                    gen_server:stop(comm);
+                    gen_server:stop(comm_v2_test);
                   true ->
                     CrashId = maps:get(Node,State),
                     ListOfCrashed = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], get_table_name(CrashId)),
