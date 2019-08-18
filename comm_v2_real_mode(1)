@@ -30,7 +30,7 @@ init([]) ->
   initial_tables(),
   RequesterPid = spawn(fun() -> requester_idle() end),
   register(requester,RequesterPid),
-  {ok, #{numPackets => 0, registers => 0, 1 => dead, 2 => dead, 3 => dead, 4 => dead, list_mem => [],
+  {ok, #{numPackets => 0, registers => 0, 1 => dead, 2 => dead, 3 => dead, 4 => dead, list_mem => [], we_ok => true,
     list_of_deads => [], alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4], alives_2 => [1,4,3]}}.
 
 %----------------------------------------------TERMINATE----------------------------------------------------------------
@@ -53,7 +53,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 close(Members) ->
   lists:foreach(fun({_,Node}) -> gen_server:cast({flock_v4,Node},stop) end ,Members),
-  gen_server:stop(comm_v2_test).
+  gen_server:stop(comm_v2).
 
 %---------------------------------------------HANDLE-CALL---------------------------------------------------------------
 % The only type of call message we support is in the type of registration by the tuple
@@ -71,7 +71,7 @@ handle_call(Request,_,State = #{registers := CurrentRegisters, list_mem := Membe
                 RegUpdated = CurrentRegisters + 1,
                 if
                   (RegUpdated =:= 4) ->
-                          graphic_v2:start_link(comm_v2),
+                          graphic_v3:start_link(comm_v2),
                           erlang:monitor_node(Name,true),
                           gen_server:cast({flock_v4,Name},{connect,RegUpdated}),
                           {noreply,State#{registers := RegUpdated, RegUpdated := Name,
@@ -98,14 +98,14 @@ handle_call(Request,_,State = #{registers := CurrentRegisters, list_mem := Membe
 % 2. state:              ask for that current state of the server. We did it for debugging purposes.
 %-----------------------------------------------------------------------------------------------------------------------
 
-handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Members}) ->
+handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Members, we_ok := Ok}) ->
   case Msg of
-    %-------- -{package,Package,Id}-------%
+    %----------{package,Package,Id}-------%
     {package,Package,Id} ->
                 if
-                  Num =:= (NumReg - 1) ->
+                  (Num =:= NumReg - 1) and (Ok =:= true) ->
                      ListToSend = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], table_acc),
-                     gen_server:cast(graphic_v2,{data,Package ++ ListToSend}),
+                     gen_server:cast(graphic_v3,{data,Package ++ ListToSend}),
                      requester!{send,Members},
                      update_tables(Id,Package),
                      ets:delete_all_objects(table_acc),
@@ -115,6 +115,12 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Mem
                     ets:insert(table_acc,{Id,Package}),
                     {noreply,State#{numPackets := Num + 1}}
                 end;
+    %----------------ready----------------%
+    ready ->
+                RequesterPid = spawn(fun() -> requester_idle() end),
+                register(requester,RequesterPid),
+                requester!{go,Members},
+                {noreply,State#{we_ok := true}};
     %----------------state----------------%
     state ->
                 io:format("The state is:~n~p ",[State]),
@@ -169,10 +175,11 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members ,alives_1 := NE1,
                 end;
     %------------{nodedown,Node}------------%
     {nodedown,Node} ->
+                exit(requester,kill),
                 if
                   Num =:= 1 ->
-                    gen_server:cast(graphic_v2,stop),
-                    gen_server:stop(comm_v2_test);
+                    gen_server:cast(graphic_v3,stop),
+                    gen_server:stop(comm_v2);
                   true ->
                     CrashId = maps:get(Node,State),
                     ListOfCrashed = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], get_table_name(CrashId)),
@@ -184,7 +191,7 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members ,alives_1 := NE1,
                     gen_server:cast({flock_v4,maps:get(Neighbour,State)},{flock_down,ListOfCrashed,CrashId}),
                     {noreply,State#{registers := Num-1, CrashId := dead, Node := dead, list_mem := NewMembers,
                       list_of_deads := [CrashId] ++ ListOfDeads, alives_1 := LI1, alives_2 := LI2, alives_3 := LI3,
-                      alives_4 := LI4}}
+                      alives_4 := LI4, we_ok := false}}
                 end;
     %----------------stop-----------------%
     stop ->
@@ -234,6 +241,7 @@ initial_tables() ->
                 ets:new(slave_2,[set,named_table]),
                 ets:new(slave_3,[set,named_table]),
                 ets:new(slave_4,[set,named_table]).
+
 %----------------------------------------------GEN-LOCATIONS------------------------------------------------------------
 % Function that uses gen_location function to generate randomly new locations on the screen.
 %-----------------------------------------------------------------------------------------------------------------------
