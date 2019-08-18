@@ -151,7 +151,8 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Mem
       io:format("SERVER: list of birds of id 3: ~p~n",[TEST3]),
       io:format("SERVER: list of birds of id 4: ~p~n",[TEST4]),
       TEST5 = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], table_acc),
-      io:format("SERVER: list of birds of in table_acc is: ~p~n",[TEST5]);
+      io:format("SERVER: list of birds of in table_acc is: ~p~n",[TEST5]),
+      {noreply,State};
     %--------------DONT-CARE--------------%
     _ElseWhere ->
       {noreply,State}
@@ -219,12 +220,12 @@ handle_info(Msg,State = #{registers := Num, list_mem := Members , alives_1 := NE
           io:format("SERVER: node is down. Crash id is: ~p~nList of crashed node is: ~p~n",[CrashId,ListOfCrashed]),
           ets:delete_all_objects(get_table_name(CrashId)),
           TEST1 = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], get_table_name(CrashId)),
-          io:format("SERVER: node is down. The table of the crashed node updated values is: ~p~n",[TEST1]),
+          io:format("SERVER: node is down with the id ~p. The table of the crashed node updated values is: ~p~n",[CrashId,TEST1]),
           NewMembers = lists:delete({CrashId,Node},Members),
           Neighbour = get_neighbour(CrashId,NE1,NE2,NE3,NE4),
           ets:insert(get_table_name(Neighbour),{CrashId,ListOfCrashed}),
           TEST2 = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], get_table_name(Neighbour)),
-          io:format("SERVER: node is down. The table of the neighbour of the crashed node updated values is: ~p~n",[TEST2]),
+          io:format("SERVER: node is down. The table of the neighbour,with the id ~p, updated values is: ~p~n",[Neighbour,TEST2]),
           [LI1,LI2,LI3,LI4] = clean_sub_lists(CrashId,NE1,NE2,NE3,NE4),
           gen_server:cast({flock_v4,maps:get(Neighbour,State)},{flock_down,ListOfCrashed,CrashId}),
           {noreply,State#{registers := Num-1, CrashId := dead, Node := dead, list_mem := NewMembers,
