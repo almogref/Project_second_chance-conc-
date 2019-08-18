@@ -14,7 +14,7 @@
 %% API
 -export([start_link/1,normalize_2D/1]).
 
-%% gen_server callbNOacks
+
 -export([init/1,
   handle_call/3,
   handle_cast/2,
@@ -96,7 +96,7 @@ handle_cast(Request, State) ->
     {flock_down,Transferred,Id} -> io:format("TEST: GOT FLOCK DOWN DATA: ~p~n Id: ~p~n",[Transferred,Id]),
       New_flocks = change_margins(Id,State#state.flocks),
       update_online(New_flocks),
-      tell_birds(State#state.agents),
+      tell_birds(State#state.agents++Transferred),
       Count = count(Transferred),
       io:format("TEST: NUMBER IS: ~p~n",[Count]),
       Waiting_List = State#state.agents_waiting ++ Transferred,
