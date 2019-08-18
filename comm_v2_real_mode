@@ -30,8 +30,8 @@ init([]) ->
   initial_tables(),
   RequesterPid = spawn(fun() -> requester_idle() end),
   register(requester,RequesterPid),
-  {ok, #{numPackets => 0, registers => 0, 1 => dead, 2 => dead, 3 => dead, 4 => dead, list_mem => empty,
-    list_of_deads => empty, alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4], alives_2 => [1,4,3]}}.
+  {ok, #{numPackets => 0, registers => 0, 1 => dead, 2 => dead, 3 => dead, 4 => dead, list_mem => [],
+    list_of_deads => [], alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4], alives_2 => [1,4,3]}}.
 
 %----------------------------------------------TERMINATE----------------------------------------------------------------
 % Terminate function for callback functions that fails or returns a bad value.
@@ -71,7 +71,7 @@ handle_call(Request,_,State = #{registers := CurrentRegisters, list_mem := Membe
                 RegUpdated = CurrentRegisters + 1,
                 if
                   (RegUpdated =:= 4) ->
-                          graphic:start_link(comm_v2),
+                          graphic_v2:start_link(comm_v2),
                           erlang:monitor_node(Name,true),
                           gen_server:cast({flock_v4,Name},{connect,RegUpdated}),
                           {noreply,State#{registers := RegUpdated, RegUpdated := Name,
@@ -105,8 +105,7 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Mem
                 if
                   Num =:= (NumReg - 1) ->
                      ListToSend = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], table_acc),
-                     gen_server:cast(graphic,{data,Package ++ ListToSend}),
-                     gen_server:cast(graphic,paint),
+                     gen_server:cast(graphic_v2,{data,Package ++ ListToSend}),
                      requester!{send,Members},
                      update_tables(Id,Package),
                      ets:delete_all_objects(table_acc),
@@ -172,7 +171,7 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members ,alives_1 := NE1,
     {nodedown,Node} ->
                 if
                   Num =:= 1 ->
-                    gen_server:cast(graphic,stop),
+                    gen_server:cast(graphic_v2,stop),
                     gen_server:stop(comm);
                   true ->
                     CrashId = maps:get(Node,State),
@@ -230,12 +229,11 @@ update_tables(Id,Package) ->
 %-----------------------------------------------------------------------------------------------------------------------
 
 initial_tables() ->
-                ets:new(table_acc,[set]),
-                ets:new(slave_1,[set]),
-                ets:new(slave_2,[set]),
-                ets:new(slave_3,[set]),
-                ets:new(slave_4,[set]).
-
+                ets:new(table_acc,[set,named_table]),
+                ets:new(slave_1,[set,named_table]),
+                ets:new(slave_2,[set,named_table]),
+                ets:new(slave_3,[set,named_table]),
+                ets:new(slave_4,[set,named_table]).
 %----------------------------------------------GEN-LOCATIONS------------------------------------------------------------
 % Function that uses gen_location function to generate randomly new locations on the screen.
 %-----------------------------------------------------------------------------------------------------------------------
