@@ -71,7 +71,7 @@ handle_call(Request,_,State = #{registers := CurrentRegisters, list_mem := Membe
                 RegUpdated = CurrentRegisters + 1,
                 if
                   (RegUpdated =:= 4) ->
-                          graphic:start_link(comm),
+                          graphic:start_link(comm_v2),
                           erlang:monitor_node(Name,true),
                           gen_server:cast({flock_v4,Name},{connect,RegUpdated}),
                           {noreply,State#{registers := RegUpdated, RegUpdated := Name,
