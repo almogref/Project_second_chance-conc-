@@ -29,7 +29,7 @@ start_link() -> gen_server:start_link({local, comm_v2}, comm_v2, [], []).
 init([]) ->
   {ok, #{numPackets => 0, registers => 0, 1 => {dead,[]}, 2 => {dead,[]}, 3 =>  {dead,[]}, 4 =>  {dead,[]},
   list_mem => [], requester => dead, list_of_deads => [], alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4],
-  alives_2 => [1,4,3]}}.
+  alives_2 => [1,4,3], list_to_send => []}}.
 
 %----------------------------------------------TERMINATE----------------------------------------------------------------
 % Terminate function for callback functions that fails or returns a bad value.
@@ -94,21 +94,21 @@ handle_call(Request,_,State = #{registers := OldNum, list_mem := Members}) ->
 % 2. state:              ask for that current state of the server. We did it for debugging purposes.
 %-----------------------------------------------------------------------------------------------------------------------
 
-handle_cast(_Msg,State = #{numPackets := Num, registers := NumReg}) ->
-  case _Msg of
-    %----------{package,[],Id}------------%
-    {package,[],Id} ->
-                {noreply,State};
+handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, requester := Requester, list_to_send := ListToSend,
+            list_mem := Members}) ->
+  case Msg of
     %-------- -{package,Package,Id}-------%
     {package,Package,Id} ->
-                gen_server:cast(graphic,{data,Package}),
                 {Node,Table} = maps:get(Id,State),
                 if
-                  Num =:= NumReg ->
-                    gen_server:cast(graphic,paint),{noreply,State#{numPackets :=0,
-                    Id := {Node,ets:insert(Table,{Id,Package})}}};
+                  Num =:= NumReg - 1 ->
+                     gen_server:cast(graphic,{data,Package++ListToSend}),
+                     gen_server:cast(graphic,paint),
+                     Requester!{send,Members},
+                     {noreply,State#{numPackets :=0, Id := {Node,ets:insert(Table,{Id,Package})}, list_to_send := []}};
                   true ->
-                    {noreply,State#{numPackets := Num+1, Id := {Node,ets:insert(Table,{Id,Package})}}}
+                    {noreply,State#{numPackets := Num+1, Id := {Node,ets:insert(Table,{Id,Package})}
+                     ,list_to_send := Package++ListToSend}}
                 end;
     %----------------state----------------%
     state ->
@@ -248,13 +248,15 @@ clean_sub_lists(CrashId,NE1,NE2,NE3,NE4) ->
 %-----------------------------------------REQUESTER-LOOP----------------------------------------------------------------
 % Area of code for the Requester. This process handles the request for new data of birds from each slave alive that
 % connect to comm_v2 server. He asks for package by sending the message {master_request} to the slave.
-% This method happening every 40ms.
+% This method happening every 35ms.
 %-----------------------------------------------------------------------------------------------------------------------
 
 requester_loop(Members) ->
                 loop_by_time(Members),
-                timer:sleep(40),
-                requester_loop(Members).
+                receive
+                  {send,Members} -> timer:sleep(35),requester_loop(Members);
+                  _   ->            requester_loop(Members)
+                end.
 
 loop_by_time([]) ->
                 finish_to_send;
