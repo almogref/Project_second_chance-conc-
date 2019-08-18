@@ -7,7 +7,7 @@
 %%% Created : 17. Aug 2019 10:33
 %%%-------------------------------------------------------------------
 -module(comm_v2).
--author("almog").
+-author("Almog Refaeli").
 
 -behaviour(gen_server).
 
@@ -148,8 +148,8 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Mem
 %                      and send cast message to the graphic server with the this number.
 %-----------------------------------------------------------------------------------------------------------------------
 
-handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := N_1 ,2 := N_2, 3 := N_3 ,4 := N_4,
-            alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4, list_of_deads := ListOfDeads}) ->
+handle_info(Msg,State = #{registers := Num,list_mem := Members ,alives_1 := NE1, alives_2 := NE2, alives_3 := NE3,
+            alives_4 := NE4, list_of_deads := ListOfDeads}) ->
   case Msg of
     %----------{go,FirstData}------------%
     {go,FirstData} ->
@@ -176,18 +176,16 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := N_1 ,2 := N_
                     gen_server:stop(comm);
                   true ->
                     CrashId = maps:get(Node,State),
-                    ListOfCrashed = ets:tab2list(element(2,maps:get(CrashId,State))),
+                    ListOfCrashed = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], get_table_name(CrashId)),
+                    ets:delete_all_objects(get_table_name(CrashId)),
                     NewMembers = lists:delete({CrashId,Node},Members),
-                    ets:delete_all_objects(element(2,maps:get(CrashId,State))),
                     Neighbour = get_neighbour(CrashId,NE1,NE2,NE3,NE4),
+                    ets:insert(get_table_name(Neighbour),{CrashId,ListOfCrashed}),
                     [LI1,LI2,LI3,LI4] = clean_sub_lists(CrashId,NE1,NE2,NE3,NE4),
-                    [Birds1,Birds2,Birds3,Birds4] = handle_crash(CrashId,Neighbour,[T1,T2,T3,T4]),
-                    %[Birds1,Birds2,Birds3,Birds4] = arrange_tables(CrashId,Neighbour,[T1,T2,T3,T4]),
-                    gen_server:cast({flock_v4,element(1,maps:get(Neighbour,State))},{flock_down,ListOfCrashed,CrashId}),
-                    gen_server:cast(graphic,{down,Num-1}),
-                    {noreply,State#{registers := Num-1, CrashId := {dead,[]}, Node := dead, list_mem := NewMembers,
+                    gen_server:cast({flock_v4,maps:get(Neighbour,State)},{flock_down,ListOfCrashed,CrashId}),
+                    {noreply,State#{registers := Num-1, CrashId := dead, Node := dead, list_mem := NewMembers,
                       list_of_deads := [CrashId] ++ ListOfDeads, alives_1 := LI1, alives_2 := LI2, alives_3 := LI3,
-                      alives_4 := LI4, 1 := {N_1,Birds1}, 2 := {N_2,Birds2}, 3 := {N_3,Birds3}, 4 := {N_4,Birds4}}}
+                      alives_4 := LI4}}
                 end;
     %----------------stop-----------------%
     stop ->
@@ -202,9 +200,23 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := N_1 ,2 := N_
 %------------------------------------------- MAINTENANCE-FUNCTIONS -----------------------------------------------------
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%----------------------------------------------UPDATE-TABLES-----------------------------------------------------------
+
+%---------------------------------------------GET-TABLE-NAME------------------------------------------------------------
 %
 %-----------------------------------------------------------------------------------------------------------------------
+
+get_table_name(Id) ->
+                case Id of
+                  1 -> slave_1;
+                  2 -> slave_2;
+                  3 -> slave_3;
+                  4 -> slave_4
+                end.
+
+%----------------------------------------------UPDATE-TABLES------------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
+
 update_tables(Id,Package) ->
                 case Id of
                    1 -> ets:insert(slave_1,{1,Package});
@@ -216,6 +228,7 @@ update_tables(Id,Package) ->
 %----------------------------------------------INITIAL-TABLES-----------------------------------------------------------
 %
 %-----------------------------------------------------------------------------------------------------------------------
+
 initial_tables() ->
                 ets:new(table_acc,[set]),
                 ets:new(slave_1,[set]),
@@ -308,7 +321,7 @@ loop_by_time([ Node | T ]) ->
 send_initial([],_,_,_) ->
                 finish_to_send;
 send_initial([H|T], Members, State, Offset) ->
-                gen_server:cast({flock_v4,element(1,maps:get(Offset,State))},{init,H,Members}),
+                gen_server:cast({flock_v4,maps:get(Offset,State)},{init,H,Members}),
                 send_initial(T, Members,State,Offset+1).
 
 %-------------------------------------------SEND-WHILE------------------------------------------------------------------
@@ -341,7 +354,7 @@ re_arange(State = #{alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 
                                       4  -> lists:nth(1,NE4)
                                     end,
  NodeToSend = maps:get(IdToSend,State),
- gen_server:cast({flock_v4,element(1,NodeToSend)},{insert,lists:nth(H,MapLocations)++lists:nth(IdToSend,MapLocations)}),
+ gen_server:cast({flock_v4,NodeToSend},{insert,lists:nth(H,MapLocations)++lists:nth(IdToSend,MapLocations)}),
  re_arange(State,MapLocations,T).
 
 %------------------------------------------MEMBERS-TO-LIST--------------------------------------------------------------
@@ -353,38 +366,3 @@ members_to_list([],Acc) ->
 members_to_list([H|T],Acc) ->
                   members_to_list(T, [element(2,H)] ++ Acc).
 
-%--------------------------------------------HANDLE-CRASH---------------------------------------------------------------
-% This function mission is to update the ets table of each node. We gets here when slave is down, so we need to update
-% our current state of data.
-%-----------------------------------------------------------------------------------------------------------------------
-
-handle_crash(CrashId,Neighbour,[T1,T2,T3,T4]) ->
-                    done.
-
-%----------------------------------------------ARRANGE-TABLES-----------------------------------------------------------
-% This function re-arrange the tables of each slave. We gets here when a slave is down and we need to transfer his data.
-%-----------------------------------------------------------------------------------------------------------------------
-
-arrange_tables(CrashId,Neighbour,[L1,L2,L3,L4]) ->
-  case CrashId of
-    1 -> case Neighbour of
-           4 -> [[],L2,L3,L4 ++ L1];
-           3 -> [[],L2,L3 ++ L1,L4];
-           2 -> [[],L2 ++ L1, L3, L4]
-         end;
-    2 -> case Neighbour of
-           1 -> [L1 ++ L2,[],L3,L4];
-           3 -> [L1,[],L3 ++ L2, L4];
-           4 -> [L1,[],L3,L1 ++ L4]
-         end;
-    3 -> case Neighbour of
-           2 -> [L1,L2 ++ L3, [], L4];
-           1 -> [L1 ++ L3, L2, [], L4];
-           4 -> [L1, L2, [], L4 ++ L3]
-         end;
-    4 -> case Neighbour of
-           3 -> [L1, L2, L3 ++ L4,[]];
-           2 -> [L1, L2 ++ L4, L3, []];
-           1 -> [L1 ++ L4, L2, L3, []]
-         end
-  end.
