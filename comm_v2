@@ -27,9 +27,11 @@ start_link() -> gen_server:start_link({local, comm_v2}, comm_v2, [], []).
 %-----------------------------------------------------------------------------------------------------------------------
 
 init([]) ->
-  {ok, #{numPackets => 0, registers => 0, 1 => {dead,[]}, 2 => {dead,[]}, 3 =>  {dead,[]}, 4 =>  {dead,[]},
-  list_mem => [], requester => dead, list_of_deads => [], alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4],
-  alives_2 => [1,4,3], list_to_send => []}}.
+  initial_tables(),
+  RequesterPid = spawn(fun() -> requester_idle() end),
+  register(requester,RequesterPid),
+  {ok, #{numPackets => 0, registers => 0, 1 => dead, 2 => dead, 3 => dead, 4 => dead, list_mem => empty,
+    list_of_deads => empty, alives_1 => [4,3,2], alives_4 => [3,2,1], alives_3 => [2,1,4], alives_2 => [1,4,3]}}.
 
 %----------------------------------------------TERMINATE----------------------------------------------------------------
 % Terminate function for callback functions that fails or returns a bad value.
@@ -63,21 +65,22 @@ close(Members) ->
 % registers + 1
 %-----------------------------------------------------------------------------------------------------------------------
 
-handle_call(Request,_,State = #{registers := OldNum, list_mem := Members}) ->
+handle_call(Request,_,State = #{registers := CurrentRegisters, list_mem := Members}) ->
   case Request of
     {register,Name} ->
+                RegUpdated = CurrentRegisters + 1,
                 if
-                  (OldNum + 1 =:= 4) ->
+                  (RegUpdated =:= 4) ->
                           graphic:start_link(comm),
                           erlang:monitor_node(Name,true),
-                          gen_server:cast({flock_v4,Name},{connect,OldNum+1}),
-                          {noreply,State#{registers := OldNum+1, OldNum+1 := {Name,ets:new(Name,[set])},
-                          Name => OldNum+1, list_mem := [{OldNum+1,Name}]++Members}};
+                          gen_server:cast({flock_v4,Name},{connect,RegUpdated}),
+                          {noreply,State#{registers := RegUpdated, RegUpdated := Name,
+                          Name => RegUpdated, list_mem := [{RegUpdated,Name}]++Members}};
                   true ->
                           erlang:monitor_node(Name,true),
-                          gen_server:cast({flock_v4,Name},{connect,OldNum+1}),
-                          {noreply,State#{registers := OldNum+1, OldNum+1 := {Name,ets:new(Name,[set])},
-                          Name => OldNum+1, list_mem := [{OldNum+1,Name}]++Members}}
+                          gen_server:cast({flock_v4,Name},{connect,RegUpdated}),
+                          {noreply,State#{registers := RegUpdated, RegUpdated := Name,
+                          Name => RegUpdated, list_mem := [{RegUpdated,Name}]++Members}}
                end;
 
     _ElseWhere      ->    {noreply, State}
@@ -89,26 +92,29 @@ handle_call(Request,_,State = #{registers := OldNum, list_mem := Members}) ->
 % 1. {package,Data,Id}:  incoming list of data that contains new data on the birds from the sender slave,The data can an
 %                        empty list so we cover that possibility in the message passing. When we gets a new package
 %                        of data, we upgrade the state of the comm_v2 server with it and sending it to graphic that
-%                        takes charge from there. Empty packages will be ignored.
-%
+%                        takes charge from there.
+% ......................................................................................................................
+
 % 2. state:              ask for that current state of the server. We did it for debugging purposes.
 %-----------------------------------------------------------------------------------------------------------------------
 
-handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, requester := Requester, list_to_send := ListToSend,
-            list_mem := Members}) ->
+handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, list_mem := Members}) ->
   case Msg of
     %-------- -{package,Package,Id}-------%
     {package,Package,Id} ->
-                {Node,Table} = maps:get(Id,State),
                 if
-                  Num =:= NumReg - 1 ->
-                     gen_server:cast(graphic,{data,Package++ListToSend}),
+                  Num =:= (NumReg - 1) ->
+                     ListToSend = ets:foldl(fun(X,List) -> element(2,X) ++ List end, [], table_acc),
+                     gen_server:cast(graphic,{data,Package ++ ListToSend}),
                      gen_server:cast(graphic,paint),
-                     Requester!{send,Members},
-                     {noreply,State#{numPackets :=0, Id := {Node,ets:insert(Table,{Id,Package})}, list_to_send := []}};
+                     requester!{send,Members},
+                     update_tables(Id,Package),
+                     ets:delete_all_objects(table_acc),
+                     {noreply,State#{numPackets := 0}};
                   true ->
-                    {noreply,State#{numPackets := Num+1, Id := {Node,ets:insert(Table,{Id,Package})}
-                     ,list_to_send := Package++ListToSend}}
+                    update_tables(Id,Package),
+                    ets:insert(table_acc,{Id,Package}),
+                    {noreply,State#{numPackets := Num + 1}}
                 end;
     %----------------state----------------%
     state ->
@@ -124,11 +130,16 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, requester := Re
 %
 % 1.{go,FirstData}:    message that received from the graphic server only when the user request to start and send initial
 %                      values(Number of birds to start with). We generate randomly locations and send to each slave the
-%                      list of locations in his sector which he needs to manage.
+%                      list of locations in his sector which he needs to manage, We do it by sending the tuple
+%                      {go,Members} to the requester with the permission to start sending messages to the slaves.
+% ......................................................................................................................
+
 % 2.{update,NumToAdd}: message that received from the graphic server when the user wants to add more birds.
 %                      We generate new locations randomly and sends them to the slaves that alive. When there is a
 %                      slave which is status is "dead" we send his extra new locations to his neighbour(neighbour
-%                      definition is clockwise e.g. node area 1 is the neighbour of node area 2)
+%                      definition is clockwise e.g. node area 1 is the neighbour of node area 2).
+% ......................................................................................................................
+
 % 3.{nodedown,Node}:   message the received when a slave is down. If all slaves(we have total of 4) are down, we close
 %                      the comm_v2 server and graphic, otherwise we initial the procedure of Handle-Crashes.
 %                      Handle-Crashes procedure: We transfer all the last income data from the slave who fall to his
@@ -137,15 +148,15 @@ handle_cast(Msg,State =#{numPackets := Num, registers := NumReg, requester := Re
 %                      and send cast message to the graphic server with the this number.
 %-----------------------------------------------------------------------------------------------------------------------
 
-handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 := {N_2,T2},3 := {N_3,T3},4 := {N_4,T4},
+handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := N_1 ,2 := N_2, 3 := N_3 ,4 := N_4,
             alives_1 := NE1, alives_2 := NE2, alives_3 := NE3, alives_4 := NE4, list_of_deads := ListOfDeads}) ->
   case Msg of
     %----------{go,FirstData}------------%
     {go,FirstData} ->
                 MapLocations = distribute(gen_locations({1300,700},FirstData),{1300,700},[],[],[],[]),
                 send_initial(MapLocations,members_to_list(Members,[]),State,1),
-                Requester = spawn(fun() -> requester_loop(Members) end),
-                {noreply,State#{requester := Requester}};
+                requester!{go,Members},
+                {noreply,State};
     %----------{update,NumToAdd}------------%
     {update,NumToAdd}  ->
                 [NL1,NL2,NL3,NL4] = distribute(gen_locations({1300,700},NumToAdd),{1300,700},[],[],[],[]),
@@ -191,6 +202,26 @@ handle_info(Msg,State = #{registers := Num,list_mem := Members,1 := {N_1,T1},2 :
 %------------------------------------------- MAINTENANCE-FUNCTIONS -----------------------------------------------------
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%----------------------------------------------UPDATE-TABLES-----------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
+update_tables(Id,Package) ->
+                case Id of
+                   1 -> ets:insert(slave_1,{1,Package});
+                   2 -> ets:insert(slave_2,{2,Package});
+                   3 -> ets:insert(slave_3,{3,Package});
+                   4 -> ets:insert(slave_4,{4,Package})
+                end.
+
+%----------------------------------------------INITIAL-TABLES-----------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
+initial_tables() ->
+                ets:new(table_acc,[set]),
+                ets:new(slave_1,[set]),
+                ets:new(slave_2,[set]),
+                ets:new(slave_3,[set]),
+                ets:new(slave_4,[set]).
 
 %----------------------------------------------GEN-LOCATIONS------------------------------------------------------------
 % Function that uses gen_location function to generate randomly new locations on the screen.
@@ -250,6 +281,12 @@ clean_sub_lists(CrashId,NE1,NE2,NE3,NE4) ->
 % connect to comm_v2 server. He asks for package by sending the message {master_request} to the slave.
 % This method happening every 35ms.
 %-----------------------------------------------------------------------------------------------------------------------
+
+requester_idle() ->
+  receive
+    {go,Members} -> requester_loop(Members);
+    _            -> requester_idle()
+  end.
 
 requester_loop(Members) ->
                 loop_by_time(Members),
