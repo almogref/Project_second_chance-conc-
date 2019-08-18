@@ -17,7 +17,7 @@
 
 
 start_link(COMM) ->
-  gen_statem:start_link({local, graphic}, graphic, COMM, []).
+  gen_statem:start_link({local, graphic_v2}, graphic_v2, COMM, []).
 
 init(COMM) ->
   process_flag(trap_exit, true),
