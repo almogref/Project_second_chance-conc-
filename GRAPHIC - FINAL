@@ -1,0 +1,186 @@
+%%%-------------------------------------------------------------------
+%%% @author almog
+%%% @copyright (C) 2019, <COMPANY>
+%%% @doc
+%%%
+%%% @end
+%%% Created : 04. Aug 2019 16:22
+%%%-------------------------------------------------------------------
+-module(graphic).
+-behavior(gen_statem).
+-author("Almog Refaeli").
+-include_lib("wx.hrl").
+
+-export([start_link/1]).
+-export([waitForData/3]).
+-export([terminate/3,code_change/4,init/1,callback_mode/0]).
+
+
+start_link(COMM) ->
+  gen_statem:start_link({local, graphic}, graphic, COMM, []).
+
+
+init(COMM) ->
+  process_flag(trap_exit, true),
+  wx:new(),
+  WxEnv = wx:get_env(),
+  Frame = wxFrame:new(wx:null(), ?wxID_ANY, "Landscape"),
+  Sizer = wxBoxSizer:new(?wxVERTICAL),
+  Panel = wxPanel:new(Frame,[{pos,{0,0}},{size, {1300, 700}}, {style, ?wxFULL_REPAINT_ON_RESIZE}]),
+  PanelButtons = wxPanel:new(Frame,[{pos,{10,615}},{size, {220, 85}}]),
+  wxSizer:add(Sizer, Panel, [{proportion, 1}, {flag, ?wxEXPAND bor ?wxALL}, {border, 5}]),
+  wxFrame:setSizer(Frame, Sizer),
+  wxSizer:setSizeHints(Sizer, Frame),
+  Canvas = wxPanel:new(Panel, [{size, {1300, 700}}]),
+  spawn_link(fun()-> set_buttons(Frame,PanelButtons, WxEnv,COMM) end),
+  BirdsImages = loadBirds(),
+  wxFrame:show(Frame),
+  wxPanel:connect(Canvas, paint, []),
+  Background =wxImage:new("BackGround.png"),
+  ClientDC = wxClientDC:new(Canvas),
+  BackgroundBitmap = wxBitmap:new(Background),
+  wxDC:drawBitmap(ClientDC, BackgroundBitmap, {0,0}),
+  wxImage:destroy(Background),
+  wxClientDC:destroy(ClientDC),
+  State = #{canvas => Canvas , birdsImages => BirdsImages, env => WxEnv, com => COMM, background => BackgroundBitmap},
+  {ok, waitForData, State}.
+
+
+callback_mode() ->
+  state_functions.
+
+terminate(_Reason, _State, _Data) ->
+  ok.
+
+code_change(_Vsn, State, Data, _Extra) ->
+  {ok,State,Data}.
+
+
+loadBirds() ->
+  #{1 => wxImage:new("red_bird.png"),
+    2 => wxImage:new("blue_bird.png"),
+    3 => wxImage:new("black_bird.png"),
+    4 => wxImage:new("orange_bird.png"),
+    5 => wxImage:new("yellow_bird.png")}.
+
+%-------------------------------------------------IDLE------------------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
+
+waitForData(info,_,State) ->
+  {keep_state, State};
+
+waitForData(cast,{data,Data},State) ->
+  paint(Data,State),
+  {keep_state, State};
+
+waitForData(cast,stop,State) ->
+  userStop(State);
+
+waitForData(cast,_,State) ->
+  {keep_state, State}.
+
+%-------------------------------------------------PAINT-----------------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
+
+paint(Data,State) ->
+  Canvas = maps:get(canvas, State),
+  ClientDC = wxClientDC:new(Canvas),
+  BufferDC = wxBufferedDC:new(ClientDC),
+  Background = maps:get(background, State),
+  wxDC:drawBitmap(BufferDC, Background, {0,0}),
+  BirdsImages =maps:get(birdsImages, State),
+  paintBirds(BufferDC, BirdsImages, Data),
+  wxBufferedDC:destroy(BufferDC),
+  wxClientDC:destroy(ClientDC).
+
+paintBirds(_, _, []) ->
+  finishPaintBirds;
+
+
+paintBirds(BufferDC, BirdsImages, [ {{X,Y},Angle,Color} | T ]) ->
+  Coordinates = {round(X) -10 ,round(Y) -10},
+  AngelInRadians = to_Rad(Angle) +math:pi(),
+  case Color of
+    red ->
+      Image= wxImage:rotate (maps:get(1,BirdsImages), AngelInRadians, {4,4}),
+      Bitmap= wxBitmap:new(Image),
+      wxDC:drawBitmap(BufferDC, Bitmap, Coordinates),
+      wxBitmap:destroy(Bitmap),
+      wxImage:destroy(Image);
+    blue ->
+      Image= wxImage:rotate (maps:get(2,BirdsImages), AngelInRadians, {4,4}),
+      Bitmap= wxBitmap:new(Image),
+      wxDC:drawBitmap(BufferDC, Bitmap, Coordinates),
+      wxBitmap:destroy(Bitmap),
+      wxImage:destroy(Image);
+    black ->
+      Image= wxImage:rotate (maps:get(3,BirdsImages), AngelInRadians, {4,4}),
+      Bitmap= wxBitmap:new(Image),
+      wxDC:drawBitmap(BufferDC, Bitmap, Coordinates),
+      wxBitmap:destroy(Bitmap),
+      wxImage:destroy(Image);
+    orange ->
+      Image= wxImage:rotate (maps:get(4,BirdsImages), AngelInRadians, {4,4}),
+      Bitmap= wxBitmap:new(Image),
+      wxDC:drawBitmap(BufferDC, Bitmap,Coordinates),
+      wxBitmap:destroy(Bitmap),
+      wxImage:destroy(Image);
+    yellow ->
+      Image= wxImage:rotate (maps:get(5,BirdsImages), AngelInRadians, {4,4}),
+      Bitmap= wxBitmap:new(Image),
+      wxDC:drawBitmap(BufferDC, Bitmap, Coordinates),
+      wxBitmap:destroy(Bitmap),
+      wxImage:destroy(Image)
+  end,
+  paintBirds(BufferDC, BirdsImages, T).
+
+
+userStop(#{birdsImages := BirdsImages})->
+  deleteImages(BirdsImages),
+  wx:destroy(),
+  gen_server:cast(comm,stop),
+  gen_statem:stop(graphic).
+
+
+deleteImages(Map) ->
+  [wxImage:destroy(I) || I <- maps:values(Map)].
+
+
+set_buttons(Frame,Panel, WxEnv,COMM) ->
+  wx:set_env(WxEnv),
+  Counter = wxTextCtrl:new(Panel, 10, [{value, "0"},{pos, {170, 30}}, {size,{30,30}}]),
+  Button1 = wxButton:new(Panel, 11, [{label, "Start"}, {pos,{10, 20}},{size, {50, 50}}]),
+  Button2 = wxButton:new(Panel, 12, [{label, "Stop"}, {pos,{70, 20}}, {size, {50, 50}}]),
+  %Font = wxFont:new(20, ?wxFONTFAMILY_DEFAULT, ?wxFONTSTYLE_NORMAL,?wxFONTWEIGHT_BOLD),
+  %wxTextCtrl:setFont(Counter, Font),
+  wxPanel:connect(Panel, command_button_clicked),
+  waitForInterupts(Frame,Counter,Button1,Button2,COMM).
+
+
+waitForInterupts(Frame,Counter,Button1,Button2,COMM) ->
+  InfoGui = receive
+              #wx{id = 11, event=#wxCommand{type = command_button_clicked}} ->
+                Number = list_to_integer(wxTextCtrl:getValue(Counter)),
+                LabelPushed = wxButton:getLabel(Button1),
+                case Number of
+                  0 when LabelPushed =:= "Start" ->
+                    nothing;
+                  Number when LabelPushed =:= "Start" ->
+                    wxButton:setLabel(Button1, "Add"),
+                    {go,Number};
+                  Number when LabelPushed =:= "Add" ->
+                    {update,Number}
+                end;
+              #wx{id = 12, event=#wxCommand{type = command_button_clicked}} ->
+                stop
+            end,
+  COMM!InfoGui,
+  if InfoGui == stop -> wxFrame:destroy(Frame); true->[] end,
+  waitForInterupts(Frame,Counter,Button1,Button2,COMM).
+
+
+
+
+to_Rad({X,Y})-> math:atan2(X,Y).
