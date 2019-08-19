@@ -1,0 +1,558 @@
+%%%-------------------------------------------------------------------
+%%% @author ofek
+%%% @copyright (C) 2019, <COMPANY>
+%%% @doc
+%%%
+%%% @end
+%%% Created : 05. Aug 2019 8:21
+%%%-------------------------------------------------------------------
+-module(flock).
+-author("ofek").
+
+-behaviour(gen_server).
+
+%% API
+-export([start_link/1,normalize_2D/1,remove_dup/1]).
+
+%% gen_server callbNOacks
+-export([init/1,
+  handle_call/3,
+  handle_cast/2,
+  handle_info/2,
+  terminate/2,
+  code_change/3]).
+
+-record(state, {id, busy, online,flag, flocks, backup, agents, agents_next, agents_ready, agents_waiting, radius, dimension, drive_factor, w1, w2, w3, w4, myname, num, max}).
+
+
+start_link(Name) ->
+  gen_server:start_link({local, flock}, flock, [Name], []).
+
+init([Name]) ->
+  State = #state{
+    myname = Name,
+    agents_next =  [],
+    agents_ready = [],
+    agents = [],
+    busy = false,
+    backup = [],
+    flag = false,
+    dimension = {1300,700},
+    radius = 150,
+    online = 4,
+    agents_waiting  = [],
+    drive_factor = 3,
+    w1 = 1,
+    w2 = 1,
+    w3 = 2,
+    w4 = 0.3},
+  spawn(fun() -> timer:sleep(10),gen_server:call({comm,'almog@ofek-ThinkPad-T460'},{register,Name}) end), % Spawn process for registration only
+  {ok,State}.
+
+handle_cast(Request, State) ->
+  STAT = get_in(Request,State),
+  if STAT  ->
+
+  case Request of
+    %~%~%~%~%~%~%~%~%~%~%~%~%~
+    stop -> io:format("TEST: stop. State \n",[]),
+            gen_server:stop(flock),
+      {noreply,State};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ Connection message
+    {connect,Id} -> io:format("got pid on gen ~w \n",[Id]),
+      {noreply, State#state{ id = Id }};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ Initialize message
+    %% the message cast spawns agents according to a list of locations sent by the master
+    %% @Locations  - [{X,Y},....]
+    %% @Flock_List - [ip1,ip2,ip3,ip4]
+    {init,Locations,Flock_List} -> % io:format("TEST:{init,Locations,Flock_List} Locations: ~p~n Flock_List: ~p~n",[Locations,Flock_List]),
+                                    Agents = spawn_flock(Locations,State),
+                                    Count = count(Locations),
+                                    NewState = State#state{ agents = Agents, flocks = Flock_List, max = Count, num = Count},
+
+                                    {noreply,NewState};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ Master request
+    %% the message cast initiates the main node routine of calculating a new set of locations for its birds
+    %% the first trigger is the function request_locations
+    %% additionally the cast updates the main agents list with backed-up agents and transferred agents
+    {master_request}  ->  %io:format("TEST: master_request.~n ",[]),
+                          if  State#state.agents_waiting =/= [] ->
+                              io:format("ADDED WAITING in master req ~p~n",[State#state.agents_waiting]),
+                              Check_List = State#state.agents ++ State#state.agents_waiting;
+                              %io:format("TEMP HAS DATA: ~p ~n ",[State#state.tempo]);
+                          true->
+                              Check_List = State#state.agents
+                          end,
+                          %io:format("Agents after adding waiting in master ~p~n",[Check_List]),
+                          if State#state.backup =/= [] ->
+                             %io:format("BackupLIST in master req ~p~n",[State#state.backup]),
+                             Check_List_2 = Check_List ++ State#state.backup;
+                          true->
+                              Check_List_2 = Check_List
+                          end,
+                           %io:format("BACKup + agents ~p~n",[Check_List_2]),
+                          Length = count(Check_List_2),
+                          NewState = State#state{agents = Check_List_2,
+                          num = Length,
+                          max = Length,
+                          agents_waiting = [],
+                          backup = []
+                          },
+                          %io:format("Final_agent LIst ~p~n",[NewState#state.agents]),
+                          if Length == 0 ->
+                             gen_server:cast({comm,'almog@ofek-ThinkPad-T460'},{package,[],State#state.id});
+                             %io:format("SENT EMPTY but my state: agents~p~n agents_n~p~n tempo~p~n",[NewState#state.agents,NewState#state.agents_n,NewState#state.tempo]);
+                          true->
+                             % io:format("ASK FOR NEW",[]),
+                             request_new_locations(NewState)
+                          end,
+
+                          {noreply,NewState};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ FLock request
+    %% a request sent by a certain node asking this node for all agents inside the radius around the sent location
+    %% the neighbors list is sent directly to the agent afterwards
+    {flock_request,Pid,Location} ->   Neighbors = get_Neighbors(State#state.agents,Location,State#state.radius),
+                                      %io:format("SEnt gen loc to ~p.~n ",[Pid]),
+                                      Pid ! {generate_loc,Neighbors},
+
+                                      {noreply,State};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ node failure notification / BACK-UP
+    {flock_down,New_flocks,Backup} -> io:format("TEST : CHECKING LIST ~p ~n",[New_flocks]),
+                                       My_ip = State#state.myname, % define
+                                       Online = State#state.online -1, % update online nodes ( one less is active )
+                                       if Backup == [] -> % if no backup is needed
+                                          Backup_Spawned = [];
+                                       true-> %% if backup is needed
+                                          io:format("Got backup ~p ~n",[Backup]),
+                                          Backup_Spawned = re_spawn(Backup,My_ip,Online), %% Spawn new bird processes
+                                          io:format("Got backup and spawned ~p ~n",[Backup_Spawned])
+                                       end,
+                                       %timer:sleep(1000000),
+                                       spawn(fun() -> updater(State#state.agents,My_ip) end), %% update my own birds "Online" count
+
+                                       {noreply,State#state{ backup = Backup_Spawned,
+                                                             flocks = New_flocks,
+                                                             online = Online,
+                                                             flag= true,
+                                                             busy = true}};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ rebooting final stage
+    %% the message is received upon the end of the back-uo routine
+    %% a message is sent back to the comm to notify him to keep the data going
+    {rebooting} -> %io:format("~p Finishied Reebooting ",[State#state.myname]),
+                   gen_server:cast({comm,'almog@ofek-ThinkPad-T460'},reboot_done),
+                   {noreply,State#state{busy = false}};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ Adding additional agents
+    {insert,New_Locations} -> io:format("TEST: INSERT. New_Locations: ~p~n",[New_Locations]),
+      io:format("TEST:NUMBER ~p~n",[count(New_Locations)]),
+                              Agents = spawn_flock(New_Locations,State),
+                              io:format("TEST: INSERT. AGENTS: ~p~n",[Agents]),
+                              {noreply, State#state{ agents_waiting = State#state.agents_waiting ++ Agents}};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ Distribution junction
+    %% where the decision is made if the new location of the agent is still in the nodes jurisdiction
+    {update,Agent} ->  Flock_i = match(State#state.flocks, State#state.dimension, get_loc(Agent)),
+                       Belong = State#state.myname == Flock_i,
+      %io:format("IS BELONG ~p =? ~p Status: ~p~n",[State#state.myname,Flock_i,Belong]),
+      if Belong -> %% new location is still inside my property
+        NewNum = State#state.num - 1,
+        Summed_list = State#state.agents_next ++ [Agent],
+        NewState = State#state{agents_next = Summed_list,
+                               agents_ready = Summed_list,
+                               num = NewNum
+                               },
+        Ready = NewState#state.num == 0,
+        if Ready -> %% if all of my birds have been taken care of
+          %io:format("DATA SENT FROM ~p to SERVER~n",[State#state.myname]),
+          gen_server:cast({comm,'almog@ofek-ThinkPad-T460'},{package,change_setup(NewState#state.agents_ready),NewState#state.id}),
+          Next_Agents = NewState#state.agents_next,
+          FinalState = NewState#state{ num = NewState#state.max,
+                                       agents = Next_Agents,
+                                       agents_next = [],
+                                       agents_ready = []};
+          true-> FinalState =NewState end;
+
+        true-> %% doesnt belong
+          %io:format("send ~p from ~p to ~p~n",[get_Pid(Agent),State#state.myname,Flock_i]),
+          Summed_list = State#state.agents_ready ++ [Agent],
+          exit(get_Pid(Agent),kill),
+          %io:format("#BEFORE: AGENTS: ~p~n ReadY:~p~n NEXT: ~p~n",[State#state.agents,State#state.agents_ready,State#state.agents_next]),
+          New_agents_List = lists:delete(Agent,State#state.agents),
+          New_ready_List =  lists:delete(Agent,Summed_list),
+          New_agents_next = lists:delete(Agent,State#state.agents_next),
+          %io:format("#AFTER: AGENTS: ~p~n ReadY:~p~n NEXT: ~p~n",[New_agents_List,New_ready_List,New_agents_next]),
+          %io:format("#TRIED TO DELETE: ~p~n",[Agent]),
+          FinalState = State#state{agents_ready = New_ready_List, agents = New_agents_List, agents_next = New_agents_next},
+          gen_server:cast({flock,Flock_i},{shake_0,State#state.myname,get_val(Agent)})
+      end,
+
+      {noreply,FinalState};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ Transfer agent - stage 1
+    {shake_0,Sender,Agent}-> % io:format("GOT shake0 FROM ~p~n",[Sender]),
+                              %%---
+                              Respawned = re_spawn([Agent],State#state.myname,State#state.online),
+                              Waiting_Agents = State#state.agents_waiting ++ Respawned,
+                              NewState = State#state{agents_waiting  = Waiting_Agents},
+                              gen_server:cast({flock,Sender},{shake_1}),
+    {noreply,NewState} ;
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~ Transfer agent - stage 2
+    {shake_1}->
+      NewState= State#state{num = State#state.num -1, max = State#state.max -1},
+      Ready = NewState#state.num == 0,
+      if Ready ->
+        %io:format("DATA-> ~p, SENT FROM ~p to SERVER(SHAKE1)~n",[State#state.myname,NewState#state.agents_ready]),
+        gen_server:cast({comm,'almog@ofek-ThinkPad-T460'},{package,change_setup(NewState#state.agents_ready),NewState#state.id}),
+        Next_Agents = NewState#state.agents_next,
+        FinalState = NewState#state{ num = NewState#state.max,
+          agents = Next_Agents,
+          agents_next = [],
+          agents_ready = []},
+        {noreply,FinalState} ;
+        true->{noreply,NewState}
+      end;
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~
+    test -> io:format("TEST: The state is: ~p ~n ",[State]),{noreply,State};
+
+    %~%~%~%~%~%~%~%~%~%~%~%~%~
+    _ -> {noreply,State}
+  end; %% END CASE
+
+    true->  %% SERVER IS BUSY
+      io:format("Server is busy",[]),{noreply,State}
+  end.
+
+
+handle_call(_Request,_From, State) ->
+  {reply, ok, State}.
+
+
+handle_info(_Info, State) ->
+  {noreply, State}.
+
+terminate(_Reason, _State) ->
+  ok.
+
+code_change(_OldVsn, State, _Extra) ->
+  {ok, State}.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+%%  @doc spawn_flock
+%%  @param Locations, Node_ip
+%%  @returns A list of Agents
+spawn_flock([],_) -> [];
+spawn_flock([Location|T],State) ->
+  Direction = gen_Di_2D(),
+  Color = color(),
+  Online = State#state.online,
+  Node = State#state.myname,
+  Pid = spawn(fun() ->agent(Location,Direction,Color,Node,[],Online,Online) end),
+  Agent = {Pid,{Location,Direction,Color}},
+  [Agent | spawn_flock(T,State)].
+
+%% request from all flocks to return the neighbors of all agents
+request_new_locations(State)->
+  rnl_loop(State#state.agents,State#state.flocks).
+
+rnl_loop([],_) -> [];
+rnl_loop([{Pid,{Location,_,_}}|T],Flocks)->
+  [gen_server:cast({flock,Ip} ,{flock_request,Pid,Location}) ||  Ip <- remove_dup(Flocks)],
+  rnl_loop(T,Flocks).
+
+%% @doc get_Neighbors
+%% @param List,Location,Radius
+%% @returns a list of Neighbors in radius including yourself if exist
+get_Neighbors(List,Location,Radius)->
+  Is_inside = fun({X_0,Y_0},{_,{{X_1,Y_1},_,_}}) ->
+    Delta_x = X_0 - X_1,
+    Delta_y = Y_0 - Y_1,
+    Distance_squared = Delta_x*Delta_x + Delta_y*Delta_y,
+    Radius_squared = Radius*Radius,
+    if Distance_squared < Radius_squared -> true;
+      true -> false
+    end end,
+  [ Item || Item <- List , Is_inside(Location,Item)].
+
+%% @doc gen_Di_2D
+%% @returns a 2D normalized vector representing a direction
+gen_Di_2D() ->
+  X_Sign = rand:uniform(2), Y_Sign =rand:uniform(2),
+  if X_Sign == 1 ->  X_vec = -rand:uniform() ; true-> X_vec = rand:uniform() end,
+  if Y_Sign == 1 ->  Y_vec = -rand:uniform() ; true-> Y_vec = rand:uniform() end,
+  normalize_2D({X_vec,Y_vec}).
+
+%% ----------------------------------------------------------------------------------------------- %%
+%%                                        AGENT PROCESS LOOP
+%% ----------------------------------------------------------------------------------------------- %%
+agent(Location, Di_2D,Color, Flock, Temp_List, Pending, Online) ->
+    receive
+    %~%~%~%~%~%~%~%~%~%~%~%~%~
+      {generate_loc,Neighbors} -> Current = Pending -1,
+                                if Current =:= 0 ->
+                                   {New_loc,New_Di} = generate_Stats(Temp_List ++ Neighbors,Location,Di_2D,Color,{1300,700}),
+                                   gen_server:cast({flock,Flock},{update,{self(),{New_loc,New_Di,Color}}}),
+                                   agent(New_loc,New_Di,Color,Flock, [], Online, Online );
+                                true ->
+                                   agent(Location,Di_2D,Color,Flock, Temp_List ++ Neighbors, Current, Online )
+                                end;
+    %~%~%~%~%~%~%~%~%~%~%~%~%~
+      {update_Active,Ret_pid} -> %io:format("~p GOT UPDATE STATUS: ~p/~p ~n ",[self(),Pending -1,Online -1]),
+                                Ret_pid ! {ack}, % return ack to updater process
+                                agent(Location,Di_2D,Color,Flock,Temp_List,Online - 1, Online -1)
+    end.
+
+match([F1,F2,F3,F4],{Width,Height},Loc)->
+  {X,Y} = Loc,
+  Border_W = Width/2,
+  Border_H = Height/2,
+  if X < Border_W ->
+    if Y < Border_H -> F2; true-> F3 end;
+    true->
+      if Y < Border_H -> F1; true-> F4 end
+  end.
+
+%--------------------------------------------
+%--------------------------------------------
+
+
+get_val({_,Val}) -> Val.
+get_loc({_,{Loc,_,_}}) -> Loc.
+get_Pid({Pid,{_,_,_}}) -> Pid.
+
+generate_Stats(Neighbors_List,Location,Direction,Color,{Width,Height}) ->
+  DriveFactor = 0.08,
+  Excluded = lists:delete({self(),{Location,Direction}},Neighbors_List),
+  Colored_specific = get_Colored_Neigh(Color,Excluded),
+  Cohesion_move = calculate_Cohesion(Colored_specific,0,Location,{0,0}),
+  Alignment = calculate_alignment(Colored_specific,0,{0,0},Direction),
+  Avoid_Neighbors = get_Neighbors(Excluded,Location,50),
+  Avoidance_move = calculate_avoidance(Avoid_Neighbors,0,Location,{0,0}),
+  Stay_inside = keepInRadius({Width,Height},Location),
+  Offset = composite(Cohesion_move,Alignment,Avoidance_move,Stay_inside),
+  Velocity = mult_i_2D(Offset,DriveFactor),
+  {sum_2D(Location,Velocity),normalize_2D(Offset)}.
+
+calculate_alignment([],0,_,Static)-> Static;
+calculate_alignment([],N,{X,Y},_)-> {X/N,Y/N};
+calculate_alignment([{_,{_,Direction,_}}|T],N,{X,Y},Static)->
+{X_i,Y_i} = Direction,
+calculate_alignment(T,N+1, {X+X_i,Y+Y_i},Static).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% COHESION %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+calculate_Cohesion([],0,_,_) -> {0,0};
+calculate_Cohesion([],N,{X_0,Y_0},{X,Y}) -> {X/N - X_0,Y/N -Y_0};
+calculate_Cohesion([{_,{Location,_,_}}|T],N,{X_0,Y_0}, {X,Y}) ->
+{X_i,Y_i} = Location,
+calculate_Cohesion(T,N+1,{X_0,Y_0},{X+X_i,Y+Y_i}).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Avoidance %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+calculate_avoidance([],0,_,_)-> {0,0};
+calculate_avoidance([],N,_,{X,Y})-> {X/N,Y/N};
+calculate_avoidance([{_,{Location,_,_}}|T],N,{X_0,Y_0},{X,Y})->
+{X_i,Y_i} = Location,
+calculate_avoidance(T,N + 1,{X_0,Y_0}, {X + X_0 -X_i ,Y + Y_0 - Y_i} ).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Composite %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+composite(Cohesion_move,Alignment,Avoidance_move,Stay_inside)->
+  Partial_move = fun(Move,Weight)->
+    Partial_Move = mult_i_2D(Move,Weight),
+    Squared_mag = magnitude(Partial_Move),
+    Squared_weight = Weight*Weight,
+    if Squared_mag > Squared_weight ->
+      mult_i_2D(normalize_2D(Partial_Move),Weight);
+      true->
+        Partial_Move
+    end
+                 end,
+  [{X0,Y0},{X1,Y1},{X2,Y2},{X3,Y3}] = [Partial_move(Cohesion_move,6),
+    Partial_move(Alignment,35),
+    Partial_move(Avoidance_move,8),
+    Partial_move(Stay_inside,1.2)],
+  {X0 +X1 +X2 +X3,Y0 + Y1 + Y2 +Y3}.
+
+%% @doc normalize_2D
+%% @param 2D Vector
+%% @returns normalized vector {Xn,Yn}
+normalize_2D(Vec)->
+  if Vec =:= {0.0,0.0} -> Vec; true->
+    {X,Y} = Vec,
+  Normal = math:pow(X*X + Y*Y,1/2),
+  {X/Normal,Y/Normal} end.
+
+%% @doc magnitude
+%%      @param  - 2D_Vector
+%%      @return - Vector magnitude - scalar
+magnitude({X,Y})-> math:pow(X*X+Y*Y,1/2).
+
+%% @doc sum_2D
+%%      @param  - 2D_Vector_0
+%%      @Param  - 2D_Vector_1
+%%      @return - summed up Vector coordinates
+sum_2D({X0,Y0},{X1,Y1})-> {X0+X1,Y0+Y1}.
+
+%% @doc sub_2D
+%%      @param  - 2D_Vector_0
+%%      @Param  - 2D_Vector_1
+%%      @return - sub subtracted Vector coordinates
+sub_2D({X0,Y0},{X1,Y1})-> {X0-X1,Y0-Y1}.
+
+%% @doc mult_i_2D
+%%      @param  - 2D_Vector_0
+%%      @Param  - 2D_Vector_1
+%%      @return - multiply vector by a scalar
+mult_i_2D({X,Y},C) -> {X*C,Y*C}.
+
+keepInRadius(Dimension,Location)->
+  {_Width,Height} = Dimension,
+  Center = {750,350},
+  CenterOffset = sub_2D(Center,Location),
+  T = magnitude(CenterOffset)/150,
+  if T < 0.8-> {0,0};
+    true -> mult_i_2D(CenterOffset,T*T)
+  end.
+
+
+get_Colored_Neigh(My_color,Agents)->
+  Is_Same = fun(Color,{_,{_,_,Other_color}}) -> Color =:= Other_color end,
+  [ Item || Item <- Agents , Is_Same(My_color,Item)].
+
+%% @doc count
+%%      count number of values in list
+%%      @param List
+count([]) -> 0;
+count([_|T])-> count(T) + 1.
+
+%% @doc color
+%%      @return random color for bird initialization
+color() ->
+  Val = rand:uniform(5),
+  case Val of
+    1 -> red;
+    2 -> black;
+    3 -> blue;
+    4 -> orange;
+    5 -> yellow
+end.
+
+%% @doc re_spawn
+%%      respawn agents as new processes after BackUp/Node transfer
+%%      their pid is replaced with a new one and their values remain the same
+%%
+%% @param List   - [{Location,Direction,Color},..]
+%% @param Node   - father ip
+%% @param Online - number of online nodes
+%%
+%% @return Agents list
+re_spawn([],_,_) -> [];
+re_spawn([{Location,Direction,Color}|T],Node,Online)->
+  Pid = spawn(fun() ->agent(Location,Direction,Color,Node,[],Online,Online) end),
+  Agent = {Pid,{Location,Direction,Color}},
+  [Agent | re_spawn(T,Node,Online)].
+
+%% @doc updater
+%%      a part of the Backup routine -
+%%      @param List - Agent List
+%%      @param Node - Sender Node, The sender node will wait for an ack message from the updater
+updater(List,Node) ->[],
+  Counter = count(List),
+  publish_news(List), %% send updates to al my agents
+  updater_wrapper(Counter,Node).
+
+%% @doc updater_wrapper
+%%      a part of the Backup routine -
+%%      @param Counter - Agent List Length
+%%      @param Node - Sender Node, The sender node will wait for an ack message from the updater
+updater_wrapper(Counter,Node)-> %% wrapper is responsible for receiving ack from agents
+  if Counter == 0 ->
+    gen_server:cast({flock,Node},{rebooting}); %% send back to node
+    %io:format("SENT BACK REEBOTING MESSAGE~n ",[])
+    true->
+  receive
+    {ack} ->
+      %io:format("Ack Received by updater in ~p ~n Counter is ~p ~n ",[Node,Counter-1]),
+      updater_wrapper(Counter-1 ,Node) %% return to receive block
+  end
+  end.
+
+%% @doc publish_news
+%%      a part of the Backup routine -
+%%      @param List - Agent list
+%%      send messages to all birds of the calling node
+publish_news([]) ->[];
+publish_news([Agent|T])->
+  {Pid,{_,_,_}} = Agent,
+  My_pid = self(),
+  Pid ! {update_Active,My_pid},
+  publish_news(T).
+
+%% @doc change_setup
+%%      reduce data in server by excluding PID from the tuple
+%%      @param Agent List
+change_setup([])-> [];
+change_setup([{_,Val}|T])-> [Val] ++ change_setup(T).
+
+%% @doc get_in
+%%      makes sure no cast are taken care of while in backup routine
+get_in(Request,State)->
+   if State#state.busy == false -> true;
+     true->
+       if Request == {rebooting} -> true;
+       true-> false end
+       end.
+
+%% @doc remove_dup
+%%      remove duplicates from list
+%%      @param - List
+remove_dup(List)->
+  Set = sets:from_list(List),
+  sets:to_list(Set).
+
+%categorize([],_,_,_,_,A,B,C) -> {A,B,C};
+%categorize([Agent_v|T],My_location,My_color,Friend_r, Foe_r, Foe_R,A,B,C) ->
+%  {X0,Y0} = My_location,
+%  {{X1,Y1},_,Color} = Agent_v,
+%  Delta_x = X0 - X1,
+%  Delta_y = Y0 - Y1,
+%  Distance_squared = Delta_x*Delta_x + Delta_y*Delta_y,
+%  if Distance_squared < Foe_r -> [];
+ %   true->
+ %     if Distance_squared < Friend_r ->[];
+ %       true->
+ %         if Distance_squared < Foe_R -> [];
+ %           true->
+ % if Distance_squared < Foe_R -> Ax = [color_dismatch(Agent_v,Color,My_color)]; true-> Ax = [] end,
+ % if Distance_squared < Foe_r -> Bx = [Agent_v]; true-> Bx = [] end,
+ % if Distance_squared < Friend_r -> Cx = [color_match(Agent_v,Color,My_color)]; true-> Cx=[] end,
+%categorize(T,My_location,Friend_r, Foe_r, Foe_R,A ++ Ax,B ++ Bx,C ++ Cx).
+
+color_match(Val,C0,C1) when C0 == C1 -> Val;
+color_match(_,_,_) -> [].
+
+color_dismatch(_,C0,C1) when C0 =/= C1 -> [];
+color_dismatch(Val,_,_) -> Val.
+
+% @TODO VAL
+% @exclude
+%generate_Stats(Neighbors_List,Location,Direction,Color,{Width,Height}) ->
+%%  DriveFactor = 0.09,
+ % %%%%Excluded = lists:delete({self(),{Location,Direction}},Neighbors_List),
+ % {Flock_avoid_neigh,Agent_avoid_neigh,Agent_neigh} =categorize(Neighbors_List,Location,130,70,250,[],[],[]),
+ % Colored_specific = get_Colored_Neigh(Color,Excluded),
+ % Cohesion_move = calculate_Cohesion(Colored_specific,0,Location,{0,0}),
+ % Alignment = calculate_alignment(Colored_specific,0,{0,0},Direction),
+ % Avoid_Neighbors = get_Neighbors(Excluded,Location,80),
+ % Avoidance_move = calculate_avoidance(Avoid_Neighbors,0,Location,{0,0}),
+ % Stay_inside = keepInRadius({Width,Height},Location),
+ % Offset = composite(Cohesion_move,Alignment,Avoidance_move,Stay_inside),
+ % Velocity = mult_i_2D(Offset,DriveFactor),
+ % {sum_2D(Location,Velocity),normalize_2D(Offset)}.
