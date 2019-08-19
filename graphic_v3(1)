@@ -7,18 +7,29 @@
 %%% Created : 04. Aug 2019 16:22
 %%%-------------------------------------------------------------------
 -module(graphic_v3).
--behavior(gen_statem).
 -author("Almog Refaeli").
+
+-behavior(gen_statem).
+
 -include_lib("wx/include/wx.hrl").
 
 -export([start_link/1]).
+
 -export([waitForData/3]).
+
 -export([terminate/3,code_change/4,init/1,callback_mode/0]).
 
+%-----------------------------------------------START-LINK--------------------------------------------------------------
+% Start link. Register graphic locally and uploading the server. We get the pid for COMM which his job his to
+% communicate between the graphic server and comm.
+%-----------------------------------------------------------------------------------------------------------------------
 
 start_link(COMM) ->
   gen_statem:start_link({local, graphic_v3}, graphic_v3, COMM, []).
 
+%------------------------------------------------INIT-------------------------------------------------------------------
+% Initial graphic with default fields.
+%-----------------------------------------------------------------------------------------------------------------------
 
 init(COMM) ->
   process_flag(trap_exit, true),
@@ -33,7 +44,7 @@ init(COMM) ->
   wxSizer:setSizeHints(Sizer, Frame),
   Canvas = wxPanel:new(Panel, [{size, {1300, 700}}]),
   spawn_link(fun()-> set_buttons(PanelButtons, WxEnv,COMM) end),
-  BirdsImages = loadBirds(),
+  BirdsImages = load_birds(),
   wxFrame:show(Frame),
   wxPanel:connect(Canvas, paint, []),
   Background =wxImage:new("backGround.png"),
@@ -45,25 +56,28 @@ init(COMM) ->
   State = #{canvas => Canvas , birdsImages => BirdsImages, env => WxEnv, com => COMM, background => BackgroundBitmap},
   {ok, waitForData, State}.
 
-
-callback_mode() ->
-  state_functions.
+%----------------------------------------------TERMINATE----------------------------------------------------------------
+% Terminate function for callback functions that fails or returns a bad value.
+%-----------------------------------------------------------------------------------------------------------------------
 
 terminate(_Reason, _State, _Data) ->
   ok.
 
+%----------------------------------------------CHANGE-CODE--------------------------------------------------------------
+% Change code function.
+%-----------------------------------------------------------------------------------------------------------------------
+
 code_change(_Vsn, State, Data, _Extra) ->
   {ok,State,Data}.
 
+%---------------------------------------------CALLBACK-MODE-------------------------------------------------------------
+% Which behavior we choose for our gen_statem
+%-----------------------------------------------------------------------------------------------------------------------
 
-loadBirds() ->
-  #{1 => wxImage:new("red_bird.png"),
-    2 => wxImage:new("blue_bird.png"),
-    3 => wxImage:new("black_bird.png"),
-    4 => wxImage:new("orange_bird.png"),
-    5 => wxImage:new("yellow_bird.png")}.
+callback_mode() ->
+  state_functions.
 
-%-------------------------------------------------IDLE------------------------------------------------------------------
+%---------------------------------------------WAIT-FOR-DATA-------------------------------------------------------------
 %
 %-----------------------------------------------------------------------------------------------------------------------
 
@@ -75,7 +89,7 @@ waitForData(cast,{data,Data},State) ->
   {keep_state, State};
 
 waitForData(cast,stop,State) ->
-  userStop(State);
+  close(State);
 
 waitForData(cast,_,State) ->
   {keep_state, State}.
@@ -91,16 +105,20 @@ paint(Data,State) ->
   Background = maps:get(background, State),
   wxDC:drawBitmap(BufferDC, Background, {0,0}),
   BirdsImages =maps:get(birdsImages, State),
-  paintBirds(BufferDC, BirdsImages, Data),
+  paint_birds(BufferDC, BirdsImages, Data),
   wxBufferedDC:destroy(BufferDC),
   wxClientDC:destroy(ClientDC).
 
-paintBirds(_, _, []) ->
+%-----------------------------------------------PAINT-BIRDS-------------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
+
+paint_birds(_, _, []) ->
   finishPaintBirds;
 
-paintBirds(BufferDC, BirdsImages, [ {_,{{X,Y},Angle,Color}} | T ]) ->
+paint_birds(BufferDC, BirdsImages, [ {{X,Y},Angle,Color} | T ]) ->
   Coordinates = {round(X) -10 ,round(Y) -10},
-  AngelInRadians = to_Rad(Angle) +math:pi(),
+  AngelInRadians = to_rad(Angle) + math:pi(),
   case Color of
     red ->
       Image= wxImage:rotate (maps:get(1,BirdsImages), AngelInRadians, {8,8}),
@@ -133,19 +151,39 @@ paintBirds(BufferDC, BirdsImages, [ {_,{{X,Y},Angle,Color}} | T ]) ->
       wxBitmap:destroy(Bitmap),
       wxImage:destroy(Image)
   end,
-  paintBirds(BufferDC, BirdsImages, T).
+  paint_birds(BufferDC, BirdsImages, T).
 
+%----------------------------------------------LOAD-BIRDS---------------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
 
-userStop(#{birdsImages := BirdsImages})->
-  deleteImages(BirdsImages),
+load_birds() ->
+  #{1 => wxImage:new("red_bird.png"),
+    2 => wxImage:new("blue_bird.png"),
+    3 => wxImage:new("black_bird.png"),
+    4 => wxImage:new("orange_bird.png"),
+    5 => wxImage:new("yellow_bird.png")}.
+
+%-------------------------------------------------CLOSE-----------------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
+
+close(#{birdsImages := BirdsImages})->
+  delete_images(BirdsImages),
   wx:destroy(),
-  gen_server:cast(comm,stop),
+  gen_server:cast(comm_v2,stop),
   gen_statem:stop(graphic_v3).
 
+%----------------------------------------------DELETE-IMAGES------------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
 
-deleteImages(Map) ->
+delete_images(Map) ->
   [wxImage:destroy(I) || I <- maps:values(Map)].
 
+%-----------------------------------------------SET-BUTTONS-------------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
 
 set_buttons(Panel, WxEnv,COMM) ->
   wx:set_env(WxEnv),
@@ -155,10 +193,13 @@ set_buttons(Panel, WxEnv,COMM) ->
   %Font = wxFont:new(20, ?wxFONTFAMILY_DEFAULT, ?wxFONTSTYLE_NORMAL,?wxFONTWEIGHT_BOLD),
   %wxTextCtrl:setFont(Counter, Font),
   wxPanel:connect(Panel, command_button_clicked),
-  waitForInterupts(Counter,Button1,Button2,COMM).
+  wait_for_interrupts(Counter,Button1,Button2,COMM).
 
+%---------------------------------------------WAIT-FOR-INTERRUPTS-------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
 
-waitForInterupts(Counter,Button1,Button2,COMM) ->
+wait_for_interrupts(Counter,Button1,Button2,COMM) ->
   InfoGui = receive
               #wx{id = 11, event=#wxCommand{type = command_button_clicked}} ->
                 Number = list_to_integer(wxTextCtrl:getValue(Counter)),
@@ -176,7 +217,10 @@ waitForInterupts(Counter,Button1,Button2,COMM) ->
                 stop
             end,
   COMM!InfoGui,
-  waitForInterupts(Counter,Button1,Button2,COMM).
+  wait_for_interrupts(Counter,Button1,Button2,COMM).
 
+%---------------------------------------------------TO-RAD--------------------------------------------------------------
+%
+%-----------------------------------------------------------------------------------------------------------------------
 
-to_Rad({X,Y})-> math:atan2(X,Y).
+to_rad({X,Y})-> math:atan2(X,Y).
