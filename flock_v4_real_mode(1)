@@ -22,7 +22,7 @@
   terminate/2,
   code_change/3]).
 
--record(state, {id, busy, online, flocks, backup, agents, agents_next, agents_ready, agents_waiting, radius, master, dimension, drive_factor, w1, w2, w3, w4, myname, num, max, ack_counter}).
+-record(state, {id, busy, online, flocks, backup, counter_total, counter_down, agents, agents_next, agents_ready, agents_waiting, radius, master, dimension, drive_factor, w1, w2, w3, w4, myname, num, max, ack_counter}).
 
 
 start_link(Name) ->
@@ -36,6 +36,8 @@ init([Name]) ->
     agents = [],
     busy = false,
     backup = [],
+    counter_total = 0,
+    counter_down = 0,
     dimension = {1300,700},
     radius = 250,
     online = 4,
@@ -48,12 +50,16 @@ init([Name]) ->
   spawn(fun() -> timer:sleep(10),gen_server:call({comm_v2,'almog@h-MBP-sl-lmwg'},{register,Name}) end), % Spawn process for registration only
   {ok,State}.
 
+
 handle_cast(Request, State) ->
+     NewCounterTotal = State#state.counter_total + 1,
+     NewCounterDown = State#state.counter_down +1,
+     io:format("REQUEST: ~p,   ID:~p  ID OF FLOCK DOWN: ~p~n",[Request,State#state.counter_total,State#state.counter_down]),
   case Request of
     stop -> io:format("TEST: stop. State \n",[]),  gen_server:stop(flock_v4);%%%%% TO COMPLETE WHAT TO DO %%%%%
     %%-------------------------------------------------------------- Connection
     {connect,Id} -> io:format("got pid on gen ~w \n",[Id]),
-                    {noreply, State#state{ id = Id }};
+                    {noreply, State#state{ id = Id}};
     %%-------------------------------------------------------------- Initialize
     %% @Locations  - [{X,Y},....]
     %% @Flock_List - [ip1,ip2,ip3,ip4]
@@ -63,14 +69,15 @@ handle_cast(Request, State) ->
                                     NewState = State#state{ agents = Agents, flocks = Flock_List, max = Count, num = Count},
                                     {noreply,NewState};
     %-------------------------------------------------------------- Master request
-    {master_request}  ->   %io:format("TEST: master_request.~n ",[]),
+    {master_request,IdCommand}  ->
+                          io:format("FLOCK_V4: ID: ~p AND THE COMMAND ID IS: ~p~n",[State#state.id,IdCommand]),
                           %---
                             if  State#state.agents_waiting =/= [] ->
                               %io:format("ADDED WAITING in master req ~p~n",[State#state.agents_waiting]),
-                              io:format("############################~n"),
-                              io:format("######  AGENTS = 0   #######~n"),
-                              io:format("############################~n"),
-                              io:format("Check_List 1: ~p ~n ",[State#state.agents ++ State#state.agents_waiting]),
+%%                              io:format("############################~n"),
+%%                              io:format("######  AGENTS = 0   #######~n"),
+%%                              io:format("############################~n"),
+%%                              io:format("Check_List 1: ~p ~n ",[State#state.agents ++ State#state.agents_waiting]),
                               Check_List = State#state.agents ++ State#state.agents_waiting;
                                %io:format("TEMP HAS DATA: ~p ~n ",[State#state.tempo]);
                             true->
@@ -79,10 +86,10 @@ handle_cast(Request, State) ->
                             %io:format("Agents after adding waiting in master ~p~n",[Check_List]),
                             if State#state.backup =/= [] ->
                               %io:format("BackupLIST in master req ~p~n",[State#state.backup]),
-                              io:format("############################~n"),
-                              io:format("######  BACKUP = 0   #######~n"),
-                              io:format("############################~n"),
-                              io:format("Check_List 2: ~p ~n ",[Check_List ++ State#state.backup]),
+%%                              io:format("############################~n"),
+%%                              io:format("######  BACKUP = 0   #######~n"),
+%%                              io:format("############################~n"),
+%%                              io:format("Check_List 2: ~p ~n ",[Check_List ++ State#state.backup]),
                               Check_List_2 = Check_List ++ State#state.backup;
                             true->
                               Check_List_2 = Check_List
@@ -93,6 +100,7 @@ handle_cast(Request, State) ->
                             NewState = State#state{agents = Check_List_2,
                             num = Length,
                             max = Length,
+                            counter_total = NewCounterTotal,
                             agents_waiting = [],
                             backup = []
                             },
@@ -108,10 +116,11 @@ handle_cast(Request, State) ->
       {noreply,NewState};
     %-------------------------------------------------------------- FLock request
     {flock_request,Pid,Location} ->
+
                                      Neighbors = get_Neighbors(State#state.agents,Location,State#state.radius),
                                       %io:format("SEnt gen loc to ~p.~n ",[Pid]),
                                       Pid ! {generate_loc,Neighbors},
-                                     {noreply,State};
+                                     {noreply,State#state{ counter_total = NewCounterTotal}};
     %%------------------------------------------------------------- Received upon node failure
     {flock_down,New_flocks,Backup} ->
       io:format("FLOCK-DOWN~n"),
@@ -120,18 +129,18 @@ handle_cast(Request, State) ->
       if Backup == [] -> % if no backup is needed
         Backup_Spawned = [];
         true-> %% if backup is needed
-          io:format("FLOCK DOWN SPAWN~n"),
+          %io:format("FLOCK DOWN SPAWN~n"),
           Backup_Spawned = re_spawn(Backup,My_ip,Online) %% Spawn new bird processes
           %io:format("Got backup and spawned ~p ~n",[Backup_Spawned])
       end,
       spawn(fun() -> updater(State#state.agents,My_ip) end), %% update my own birds "Online" count
 
-    {noreply,State#state{ backup = Backup_Spawned, flocks = New_flocks, online = Online}};
+    {noreply,State#state{ backup = Backup_Spawned, flocks = New_flocks, online = Online,  counter_total = NewCounterTotal, counter_down = NewCounterDown}};
     %---------------------------------------------------------------
     {rebooting} ->
       %io:format("~p Finishied Reebooting ",[State#state.myname]),
       gen_server:cast({comm_v2,'almog@h-MBP-sl-lmwg'},reboot_done),
-    {noreply,State};
+    {noreply,State#state{counter_total = NewCounterTotal}};
 
     %%---------------------
     {insert,New_Locations} ->
@@ -140,6 +149,7 @@ handle_cast(Request, State) ->
       Count = count(New_Locations),
       NewState = State#state{ agents_next = State#state.agents_next ++ Agents,
                               max = State#state.max + Count,
+                              counter_total = NewCounterTotal,
                               num = State#state.num + Count},
     {noreply,NewState};
     %%---------------------
@@ -162,7 +172,7 @@ handle_cast(Request, State) ->
           Next_Agents = NewState#state.agents_next,
           FinalState = NewState#state{ num = NewState#state.max,
                                        agents = Next_Agents,
-                                       agents_next = [],
+                                       agents_next = [],counter_total = NewCounterTotal,
                                        agents_ready = []};
           true-> FinalState =NewState end;
 
@@ -173,7 +183,7 @@ handle_cast(Request, State) ->
           New_agents_List = lists:delete(Agent,State#state.agents),
           New_ready_List =  lists:delete(Agent,Summed_list),
           New_agents_next = lists:delete(Agent,State#state.agents_next),
-          FinalState = State#state{agents_ready = New_ready_List, agents = New_agents_List, agents_next = New_agents_next},
+          FinalState = State#state{agents_ready = New_ready_List, agents = New_agents_List, agents_next = New_agents_next,counter_total = NewCounterTotal},
           gen_server:cast({flock_v4,Flock_i},{shake_0,State#state.myname,get_val(Agent)})
       end,
       {noreply,FinalState};
@@ -181,16 +191,16 @@ handle_cast(Request, State) ->
     {shake_0,Sender,Agent} -> % io:format("GOT shake0 FROM ~p~n",[Sender]),
                               %%---
                               Respawned = re_spawn([Agent],State#state.myname,State#state.online),
-                              io:format("############################~n"),
-                              io:format("#####  SHAKE_0 = 0   #######~n"),
-                              io:format("############################~n"),
-                              io:format("Waiting_Agents: ~p ~n ",[State#state.agents_waiting ++ Respawned]),
+%%                              io:format("############################~n"),
+%%                              io:format("#####  SHAKE_0 = 0   #######~n"),
+%%                              io:format("############################~n"),
+%%                              io:format("Waiting_Agents: ~p ~n ",[State#state.agents_waiting ++ Respawned]),
                               Waiting_Agents = State#state.agents_waiting ++ Respawned,
-                              NewState = State#state{agents_waiting  = Waiting_Agents},
+                              NewState = State#state{agents_waiting  = Waiting_Agents,counter_total = NewCounterTotal},
                               gen_server:cast({flock_v4,Sender},{shake_1}),
     {noreply,NewState} ;
     {shake_1}->
-      NewState= State#state{num = State#state.num -1, max = State#state.max -1},
+      NewState= State#state{num = State#state.num -1, max = State#state.max -1,counter_total = NewCounterTotal},
       Ready = NewState#state.num == 0,
       if Ready ->
         %io:format("DATA-> ~p, SENT FROM ~p to SERVER(SHAKE1)~n",[State#state.myname,NewState#state.agents_ready]),
@@ -199,6 +209,7 @@ handle_cast(Request, State) ->
         FinalState = NewState#state{ num = NewState#state.max,
           agents = Next_Agents,
           agents_next = [],
+          counter_total = NewCounterTotal,
           agents_ready = []},
         {noreply,FinalState} ;
         true->{noreply,NewState}
